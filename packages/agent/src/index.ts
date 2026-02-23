@@ -1,38 +1,45 @@
 import { program } from 'commander';
 import * as fs from 'fs-extra';
 import { AgentServer } from './server/AgentServer';
-import { Agent }       from './agent/Agent';
-import { logger }      from './logger';
+import { Agent } from './agent/Agent';
+import { logger } from './logger';
 import { DatabaseMemory } from './memory/DatabaseMemory';
-import { loadConfig }  from './config';
+import { loadConfig } from './config';
+
+// CLI option types for commander action handlers
+type CLIOptions = Record<string, string | boolean | undefined>;
 
 async function main(): Promise<void> {
   const config = loadConfig();
 
   program
     .name('klaus-code')
-    .description('AI Agent powered by Claude — builds, tests, and deploys applications')
+    .description(
+      'AI Agent powered by Claude — builds, tests, and deploys applications'
+    )
     .version('1.0.0');
 
   program
     .command('serve')
     .description('Start the agent server with WebSocket + REST API')
     .option('-p, --port <port>', 'Port to listen on', String(config.port))
-    .action(async (opts) => {
+    .action(async (opts: CLIOptions) => {
       // ── Workspace validation ───────────────────────────────────────────────
       // Fail fast with a clear message rather than letting every file operation
       // fail with a confusing ENOENT deep in tool execution.
       if (!(await fs.pathExists(config.workspaceDir))) {
         logger.error(
           `Workspace directory does not exist: ${config.workspaceDir}\n` +
-          `Set AGENT_WORKSPACE in your .env file to an existing directory.`
+            `Set AGENT_WORKSPACE in your .env file to an existing directory.`
         );
         process.exit(1);
       }
 
       const stat = await fs.stat(config.workspaceDir);
       if (!stat.isDirectory()) {
-        logger.error(`AGENT_WORKSPACE is not a directory: ${config.workspaceDir}`);
+        logger.error(
+          `AGENT_WORKSPACE is not a directory: ${config.workspaceDir}`
+        );
         process.exit(1);
       }
 
@@ -55,8 +62,13 @@ async function main(): Promise<void> {
         await sandbox.initialize();
       }
 
-      const agent  = new Agent(config, memory);
-      const server = new AgentServer(agent, memory, config, parseInt(opts.port, 10));
+      const agent = new Agent(config, memory);
+      const server = new AgentServer(
+        agent,
+        memory,
+        config,
+        parseInt(opts.port, 10)
+      );
       await server.start();
 
       logger.info(`Agent server running on http://localhost:${opts.port}`);
@@ -102,7 +114,7 @@ async function main(): Promise<void> {
       };
 
       process.on('SIGTERM', () => shutdown('SIGTERM'));
-      process.on('SIGINT',  () => shutdown('SIGINT'));
+      process.on('SIGINT', () => shutdown('SIGINT'));
 
       // Catch unhandled rejections so they appear in the log rather than
       // crashing silently or printing an unhelpful stack to stderr
@@ -120,10 +132,16 @@ async function main(): Promise<void> {
         logger.error(`Workspace does not exist: ${opts.workspace}`);
         process.exit(1);
       }
-      logger.info('Running agent in CLI mode', { message, workspace: opts.workspace });
+      logger.info('Running agent in CLI mode', {
+        message,
+        workspace: opts.workspace,
+      });
       const memory = new DatabaseMemory(config.dbPath);
       await memory.initialize();
-      const agent  = new Agent({ ...config, workspaceDir: opts.workspace }, memory);
+      const agent = new Agent(
+        { ...config, workspaceDir: opts.workspace },
+        memory
+      );
       const result = await agent.run(message);
       console.log('\n--- Agent Result ---\n');
       console.log(result.summary);
@@ -134,13 +152,13 @@ async function main(): Promise<void> {
     .command('deploy')
     .description('Deploy current workspace to Netlify')
     .option('--workspace <path>', 'Workspace directory', process.cwd())
-    .option('--site-id <id>',     'Netlify site ID (overrides config)')
-    .action(async (opts) => {
+    .option('--site-id <id>', 'Netlify site ID (overrides config)')
+    .action(async (opts: CLIOptions) => {
       const { deployToNetlify } = await import('./tools/DeployTool');
       await deployToNetlify({
         workspaceDir: opts.workspace,
-        siteId:       opts.siteId || config.netlifySiteId,
-        authToken:    config.netlifyToken,
+        siteId: opts.siteId || config.netlifySiteId,
+        authToken: config.netlifyToken,
       });
     });
 
@@ -169,9 +187,11 @@ async function main(): Promise<void> {
     });
 
   db.command('clear-sessions')
-    .description('Delete all session history (messages, tool calls, token usage). Knowledge is kept.')
+    .description(
+      'Delete all session history (messages, tool calls, token usage). Knowledge is kept.'
+    )
     .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (opts) => {
+    .action(async (opts: CLIOptions) => {
       const memory = new DatabaseMemory(config.dbPath);
       await memory.initialize();
       const { sessions } = memory.stats();
@@ -184,9 +204,15 @@ async function main(): Promise<void> {
 
       if (!opts.yes) {
         const { createInterface } = await import('readline');
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const rl = createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
         const answer = await new Promise<string>((resolve) =>
-          rl.question(`Delete ${sessions} session(s) and all their history? [y/N] `, resolve)
+          rl.question(
+            `Delete ${sessions} session(s) and all their history? [y/N] `,
+            resolve
+          )
         );
         rl.close();
         if (answer.toLowerCase() !== 'y') {
@@ -198,22 +224,25 @@ async function main(): Promise<void> {
 
       const deleted = memory.clearSessions();
       memory.close();
-      console.log(`✓ Deleted ${deleted} session(s) and all associated messages, tool calls, and token usage.`);
+      console.log(
+        `✓ Deleted ${deleted} session(s) and all associated messages, tool calls, and token usage.`
+      );
     });
 
   db.command('clear-knowledge')
     .description('Delete stored knowledge entries. Sessions are kept.')
     .option('--category <name>', 'Only delete entries in this category')
-    .option('-y, --yes',         'Skip confirmation prompt')
-    .action(async (opts) => {
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .action(async (opts: CLIOptions) => {
       const memory = new DatabaseMemory(config.dbPath);
       await memory.initialize();
 
       const knowledge = memory.listKnowledge(opts.category);
       if (knowledge.length === 0) {
-        console.log(opts.category
-          ? `No knowledge entries in category "${opts.category}".`
-          : 'No knowledge entries to delete.'
+        console.log(
+          opts.category
+            ? `No knowledge entries in category "${opts.category}".`
+            : 'No knowledge entries to delete.'
         );
         memory.close();
         return;
@@ -222,15 +251,23 @@ async function main(): Promise<void> {
       // Show what will be deleted so user knows exactly what they're removing
       console.log('\nEntries to be deleted:');
       for (const k of knowledge) {
-        console.log(`  [${k.category}] ${k.key}: ${String(k.value).slice(0, 80)}`);
+        console.log(
+          `  [${k.category}] ${k.key}: ${String(k.value).slice(0, 80)}`
+        );
       }
       console.log('');
 
       if (!opts.yes) {
         const { createInterface } = await import('readline');
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const rl = createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
         const answer = await new Promise<string>((resolve) =>
-          rl.question(`Delete ${knowledge.length} knowledge entry(s)? [y/N] `, resolve)
+          rl.question(
+            `Delete ${knowledge.length} knowledge entry(s)? [y/N] `,
+            resolve
+          )
         );
         rl.close();
         if (answer.toLowerCase() !== 'y') {
@@ -246,9 +283,11 @@ async function main(): Promise<void> {
     });
 
   db.command('clear-all')
-    .description('Delete everything — sessions, history, and knowledge. Cannot be undone.')
+    .description(
+      'Delete everything — sessions, history, and knowledge. Cannot be undone.'
+    )
     .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (opts) => {
+    .action(async (opts: CLIOptions) => {
       const memory = new DatabaseMemory(config.dbPath);
       await memory.initialize();
       const s = memory.stats();
@@ -261,12 +300,17 @@ async function main(): Promise<void> {
 
       if (!opts.yes) {
         console.log('\nThis will permanently delete:');
-        console.log(`  ${s.sessions} session(s) + ${s.messages} messages + ${s.toolCalls} tool calls`);
+        console.log(
+          `  ${s.sessions} session(s) + ${s.messages} messages + ${s.toolCalls} tool calls`
+        );
         console.log(`  ${s.knowledge} knowledge entries`);
         console.log(`  $${s.totalCostUsd.toFixed(4)} of tracked API spend\n`);
 
         const { createInterface } = await import('readline');
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const rl = createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
         const answer = await new Promise<string>((resolve) =>
           rl.question('Type "clear" to confirm: ', resolve)
         );
@@ -280,24 +324,30 @@ async function main(): Promise<void> {
 
       const result = memory.clearAll();
       memory.close();
-      console.log(`✓ Cleared ${result.sessions} session(s) and ${result.knowledge} knowledge entries.`);
-      console.log('  The database schema is intact — the agent will start fresh on next run.');
+      console.log(
+        `✓ Cleared ${result.sessions} session(s) and ${result.knowledge} knowledge entries.`
+      );
+      console.log(
+        '  The database schema is intact — the agent will start fresh on next run.'
+      );
     });
 
   db.command('changes')
     .description('Show a chronological log of every file change the agent made')
     .option('--session <id>', 'Limit to a specific session ID')
-    .option('--diff',         'Show the full file content / patch for each change')
-    .action(async (opts) => {
+    .option('--diff', 'Show the full file content / patch for each change')
+    .action(async (opts: CLIOptions) => {
       const memory = new DatabaseMemory(config.dbPath);
       await memory.initialize();
       const changes = memory.getFileChanges(opts.session);
       memory.close();
 
       if (changes.length === 0) {
-        console.log(opts.session
-          ? `No file changes found for session ${opts.session}.`
-          : 'No file changes recorded yet.');
+        console.log(
+          opts.session
+            ? `No file changes found for session ${opts.session}.`
+            : 'No file changes recorded yet.'
+        );
         return;
       }
 
@@ -309,19 +359,19 @@ async function main(): Promise<void> {
       }
 
       const TOOL_LABEL: Record<string, string> = {
-        write_file:     'CREATE',
-        apply_patch:    'MODIFY',
-        delete_file:    'DELETE',
+        write_file: 'CREATE',
+        apply_patch: 'MODIFY',
+        delete_file: 'DELETE',
         git_checkpoint: 'COMMIT',
       };
       const TOOL_COLOUR: Record<string, string> = {
-        write_file:     '\x1b[32m',   // green
-        apply_patch:    '\x1b[33m',   // yellow
-        delete_file:    '\x1b[31m',   // red
-        git_checkpoint: '\x1b[36m',   // cyan
+        write_file: '\x1b[32m', // green
+        apply_patch: '\x1b[33m', // yellow
+        delete_file: '\x1b[31m', // red
+        git_checkpoint: '\x1b[36m', // cyan
       };
       const RESET = '\x1b[0m';
-      const DIM   = '\x1b[2m';
+      const DIM = '\x1b[2m';
 
       for (const [sessionId, rows] of bySession) {
         const workspaceDir = rows[0].workspaceDir;
@@ -331,13 +381,16 @@ async function main(): Promise<void> {
         console.log('─'.repeat(64));
 
         for (const c of rows) {
-          const label  = TOOL_LABEL[c.toolName] ?? c.toolName.toUpperCase();
+          const label = TOOL_LABEL[c.toolName] ?? c.toolName.toUpperCase();
           const colour = TOOL_COLOUR[c.toolName] ?? '';
-          const ts     = c.createdAt.toISOString().replace('T', ' ').slice(0, 19);
-          const ok     = c.success ? '' : ' ✗ FAILED';
-          const ms     = c.durationMs != null ? ` ${DIM}(${c.durationMs}ms)${RESET}` : '';
+          const ts = c.createdAt.toISOString().replace('T', ' ').slice(0, 19);
+          const ok = c.success ? '' : ' ✗ FAILED';
+          const ms =
+            c.durationMs != null ? ` ${DIM}(${c.durationMs}ms)${RESET}` : '';
 
-          console.log(`${DIM}${ts}${RESET}  ${colour}${label.padEnd(7)}${RESET}  ${c.filePath}${ok}${ms}`);
+          console.log(
+            `${DIM}${ts}${RESET}  ${colour}${label.padEnd(7)}${RESET}  ${c.filePath}${ok}${ms}`
+          );
 
           // --diff: print full content for writes, patch text for apply_patch,
           // commit message + stats for git_checkpoint
@@ -346,37 +399,52 @@ async function main(): Promise<void> {
               const input = JSON.parse(c.input);
               if (c.toolName === 'write_file' && input.content) {
                 const lines = String(input.content).split('\n');
-                console.log(`${DIM}         ┌─ content (${lines.length} lines)${RESET}`);
+                console.log(
+                  `${DIM}         ┌─ content (${lines.length} lines)${RESET}`
+                );
                 for (const line of lines.slice(0, 40)) {
                   console.log(`${DIM}         │${RESET} ${line}`);
                 }
                 if (lines.length > 40) {
-                  console.log(`${DIM}         │ … ${lines.length - 40} more lines${RESET}`);
+                  console.log(
+                    `${DIM}         │ … ${lines.length - 40} more lines${RESET}`
+                  );
                 }
                 console.log(`${DIM}         └─${RESET}`);
               } else if (c.toolName === 'apply_patch' && input.patch) {
                 const plines = String(input.patch).split('\n');
-                console.log(`${DIM}         ┌─ patch (${plines.length} lines)${RESET}`);
+                console.log(
+                  `${DIM}         ┌─ patch (${plines.length} lines)${RESET}`
+                );
                 for (const line of plines.slice(0, 60)) {
-                  const lineColour =
-                    line.startsWith('+') ? '\x1b[32m' :
-                    line.startsWith('-') ? '\x1b[31m' :
-                    DIM;
+                  const lineColour = line.startsWith('+')
+                    ? '\x1b[32m'
+                    : line.startsWith('-')
+                      ? '\x1b[31m'
+                      : DIM;
                   console.log(`         ${lineColour}${line}${RESET}`);
                 }
                 if (plines.length > 60) {
-                  console.log(`${DIM}         │ … ${plines.length - 60} more lines${RESET}`);
+                  console.log(
+                    `${DIM}         │ … ${plines.length - 60} more lines${RESET}`
+                  );
                 }
                 console.log(`${DIM}         └─${RESET}`);
               } else if (c.toolName === 'git_checkpoint') {
                 if (c.output) {
                   try {
                     const out = JSON.parse(c.output);
-                    console.log(`${DIM}         hash: ${out.hash ?? ''}  files: ${out.filesChanged ?? '?'}  branch: ${out.branch ?? ''}${RESET}`);
-                  } catch {}
+                    console.log(
+                      `${DIM}         hash: ${out.hash ?? ''}  files: ${out.filesChanged ?? '?'}  branch: ${out.branch ?? ''}${RESET}`
+                    );
+                  } catch {
+                    /* invalid JSON, skip */
+                  }
                 }
               }
-            } catch {}
+            } catch {
+              /* display error, continue */
+            }
           }
         }
       }
@@ -384,12 +452,18 @@ async function main(): Promise<void> {
     });
 
   db.command('git-log')
-    .description('Show the git history of all commits the agent has made in the workspace')
-    .option('--limit <n>',    'Number of commits to show', '50')
-    .option('--show <hash>',  'Print the full diff for a specific commit hash')
-    .option('--patch',        'Print the full diff for every commit')
-    .option('--workspace <p>', 'Workspace directory to inspect', config.workspaceDir)
-    .action(async (opts) => {
+    .description(
+      'Show the git history of all commits the agent has made in the workspace'
+    )
+    .option('--limit <n>', 'Number of commits to show', '50')
+    .option('--show <hash>', 'Print the full diff for a specific commit hash')
+    .option('--patch', 'Print the full diff for every commit')
+    .option(
+      '--workspace <p>',
+      'Workspace directory to inspect',
+      config.workspaceDir
+    )
+    .action(async (opts: CLIOptions) => {
       const { GitTool } = await import('./tools/GitTool');
       const git = new GitTool(opts.workspace);
 
@@ -399,23 +473,37 @@ async function main(): Promise<void> {
         try {
           detail = await git.agentShow(opts.show);
         } catch (err: any) {
-          console.error(`Could not retrieve commit ${opts.show}: ${err.message}`);
+          console.error(
+            `Could not retrieve commit ${opts.show}: ${err.message}`
+          );
           process.exit(1);
         }
 
-        const STATUS_LABEL: Record<string, string> = { A: 'added', M: 'modified', D: 'deleted', R: 'renamed' };
-        const STATUS_COLOUR: Record<string, string> = { A: '\x1b[32m', M: '\x1b[33m', D: '\x1b[31m', R: '\x1b[36m' };
+        const STATUS_LABEL: Record<string, string> = {
+          A: 'added',
+          M: 'modified',
+          D: 'deleted',
+          R: 'renamed',
+        };
+        const STATUS_COLOUR: Record<string, string> = {
+          A: '\x1b[32m',
+          M: '\x1b[33m',
+          D: '\x1b[31m',
+          R: '\x1b[36m',
+        };
         const RESET = '\x1b[0m';
-        const DIM   = '\x1b[2m';
+        const DIM = '\x1b[2m';
 
         console.log(`\ncommit ${detail.hash}`);
         console.log(`Author: ${detail.author}`);
-        console.log(`Date:   ${detail.date.toISOString().replace('T', ' ').slice(0, 19)}`);
+        console.log(
+          `Date:   ${detail.date.toISOString().replace('T', ' ').slice(0, 19)}`
+        );
         console.log(`\n    ${detail.message}\n`);
 
         for (const f of detail.files) {
           const colour = STATUS_COLOUR[f.status] ?? '';
-          const label  = STATUS_LABEL[f.status]  ?? f.status;
+          const label = STATUS_LABEL[f.status] ?? f.status;
           console.log(`  ${colour}${label.padEnd(9)}${RESET}  ${f.path}`);
         }
 
@@ -447,25 +535,35 @@ async function main(): Promise<void> {
       }
 
       const RESET = '\x1b[0m';
-      const DIM   = '\x1b[2m';
-      const CYAN  = '\x1b[36m';
-      const BOLD  = '\x1b[1m';
+      const DIM = '\x1b[2m';
+      const CYAN = '\x1b[36m';
+      const BOLD = '\x1b[1m';
 
-      console.log(`\n${BOLD}Agent commit history${RESET}  ${DIM}(${commits.length} commits, workspace: ${opts.workspace})${RESET}\n`);
+      console.log(
+        `\n${BOLD}Agent commit history${RESET}  ${DIM}(${commits.length} commits, workspace: ${opts.workspace})${RESET}\n`
+      );
 
       for (const c of commits) {
         const ts = c.date.toISOString().replace('T', ' ').slice(0, 19);
-        console.log(`${CYAN}${c.shortHash}${RESET}  ${DIM}${ts}${RESET}  ${c.message}`);
+        console.log(
+          `${CYAN}${c.shortHash}${RESET}  ${DIM}${ts}${RESET}  ${c.message}`
+        );
 
         if (opts.patch) {
           let detail: any;
-          try { detail = await git.agentShow(c.hash); } catch { continue; }
+          try {
+            detail = await git.agentShow(c.hash);
+          } catch {
+            continue;
+          }
 
           for (const f of detail.files) {
             const colour =
-              f.status === 'A' ? '\x1b[32m' :
-              f.status === 'D' ? '\x1b[31m' :
-              '\x1b[33m';
+              f.status === 'A'
+                ? '\x1b[32m'
+                : f.status === 'D'
+                  ? '\x1b[31m'
+                  : '\x1b[33m';
             console.log(`         ${colour}${f.status}  ${f.path}${RESET}`);
           }
 
@@ -484,8 +582,12 @@ async function main(): Promise<void> {
         }
       }
 
-      console.log(`\n${DIM}Use --show <hash> to see the full diff for a specific commit.${RESET}\n`);
-      console.log(`${DIM}Use --patch to include diffs for all commits above.${RESET}\n`);
+      console.log(
+        `\n${DIM}Use --show <hash> to see the full diff for a specific commit.${RESET}\n`
+      );
+      console.log(
+        `${DIM}Use --patch to include diffs for all commits above.${RESET}\n`
+      );
     });
 
   program.parse(process.argv);

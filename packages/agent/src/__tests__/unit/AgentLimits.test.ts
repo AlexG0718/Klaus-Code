@@ -27,7 +27,7 @@ const MockAnthropic = Anthropic as jest.MockedClass<typeof Anthropic>;
 // Build a fake streaming response that returns end_turn immediately
 function makeStreamResponse(inputTokens = 1000, outputTokens = 500) {
   const fakeStream = {
-    on: jest.fn((event: string, cb: (...args: unknown[]) => void) => {
+    on: jest.fn((event: string, cb: (text: string) => void) => {
       if (event === 'text') cb('Done.');
       return fakeStream;
     }),
@@ -130,9 +130,7 @@ describe('Agent safety limits', () => {
       const agent = new Agent(makeConfig({ maxPromptChars: 10 }), mockMemory);
       try {
         await agent.run('x'.repeat(11));
-      } catch {
-        /* expected rejection */
-      }
+      } catch {}
       expect(agent.activeSessionCount).toBe(0);
     });
   });
@@ -207,9 +205,7 @@ describe('Agent safety limits', () => {
       const agent = new Agent(makeConfig(), mockMemory);
       try {
         await agent.run('will fail');
-      } catch {
-        /* expected failure */
-      }
+      } catch {}
       expect(agent.activeSessionCount).toBe(0);
     });
 
