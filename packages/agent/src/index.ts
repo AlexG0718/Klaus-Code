@@ -6,8 +6,35 @@ import { logger } from './logger';
 import { DatabaseMemory } from './memory/DatabaseMemory';
 import { loadConfig } from './config';
 
-// CLI option types for commander action handlers
-type CLIOptions = Record<string, string | boolean | undefined>;
+// Specific option types for each CLI command
+interface ServeOptions {
+  port: string;
+}
+
+interface DeployOptions {
+  workspace: string;
+  siteId?: string;
+}
+
+interface ConfirmOptions {
+  yes?: boolean;
+}
+
+interface CategoryOptions extends ConfirmOptions {
+  category?: string;
+}
+
+interface SessionOptions {
+  session?: string;
+  diff?: boolean;
+}
+
+interface GitLogOptions {
+  limit: string;
+  patch?: boolean;
+  show?: string;
+  workspace: string;
+}
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -23,7 +50,7 @@ async function main(): Promise<void> {
     .command('serve')
     .description('Start the agent server with WebSocket + REST API')
     .option('-p, --port <port>', 'Port to listen on', String(config.port))
-    .action(async (opts: CLIOptions) => {
+    .action(async (opts: ServeOptions) => {
       // ── Workspace validation ───────────────────────────────────────────────
       // Fail fast with a clear message rather than letting every file operation
       // fail with a confusing ENOENT deep in tool execution.
@@ -153,7 +180,7 @@ async function main(): Promise<void> {
     .description('Deploy current workspace to Netlify')
     .option('--workspace <path>', 'Workspace directory', process.cwd())
     .option('--site-id <id>', 'Netlify site ID (overrides config)')
-    .action(async (opts: CLIOptions) => {
+    .action(async (opts: DeployOptions) => {
       const { deployToNetlify } = await import('./tools/DeployTool');
       await deployToNetlify({
         workspaceDir: opts.workspace,
@@ -191,7 +218,7 @@ async function main(): Promise<void> {
       'Delete all session history (messages, tool calls, token usage). Knowledge is kept.'
     )
     .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (opts: CLIOptions) => {
+    .action(async (opts: ConfirmOptions) => {
       const memory = new DatabaseMemory(config.dbPath);
       await memory.initialize();
       const { sessions } = memory.stats();
@@ -233,7 +260,7 @@ async function main(): Promise<void> {
     .description('Delete stored knowledge entries. Sessions are kept.')
     .option('--category <name>', 'Only delete entries in this category')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (opts: CLIOptions) => {
+    .action(async (opts: CategoryOptions) => {
       const memory = new DatabaseMemory(config.dbPath);
       await memory.initialize();
 
@@ -287,7 +314,7 @@ async function main(): Promise<void> {
       'Delete everything — sessions, history, and knowledge. Cannot be undone.'
     )
     .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (opts: CLIOptions) => {
+    .action(async (opts: ConfirmOptions) => {
       const memory = new DatabaseMemory(config.dbPath);
       await memory.initialize();
       const s = memory.stats();
@@ -336,7 +363,7 @@ async function main(): Promise<void> {
     .description('Show a chronological log of every file change the agent made')
     .option('--session <id>', 'Limit to a specific session ID')
     .option('--diff', 'Show the full file content / patch for each change')
-    .action(async (opts: CLIOptions) => {
+    .action(async (opts: SessionOptions) => {
       const memory = new DatabaseMemory(config.dbPath);
       await memory.initialize();
       const changes = memory.getFileChanges(opts.session);
@@ -463,7 +490,7 @@ async function main(): Promise<void> {
       'Workspace directory to inspect',
       config.workspaceDir
     )
-    .action(async (opts: CLIOptions) => {
+    .action(async (opts: GitLogOptions) => {
       const { GitTool } = await import('./tools/GitTool');
       const git = new GitTool(opts.workspace);
 
