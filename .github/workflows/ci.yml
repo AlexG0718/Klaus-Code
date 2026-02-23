@@ -41,9 +41,11 @@ jobs:
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
-        if: always()
+        if: success()
+        continue-on-error: true
         with:
           files: packages/agent/coverage/lcov.info
+          fail_ci_if_error: false
 
   build:
     name: Build
@@ -95,7 +97,7 @@ jobs:
           publish-dir: packages/ui/dist
           production-deploy: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          deploy-message: "PR Preview - ${{ github.event.pull_request.title }}"
+          deploy-message: 'PR Preview - ${{ github.event.pull_request.title }}'
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
