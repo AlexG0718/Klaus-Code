@@ -1,13 +1,5 @@
 /**
  * Tests for Docker sandbox routing across BuildTool, LintTool, ScriptTool, TestTool.
- *
- * Strategy: mock DockerSandbox.execute() and verify:
- *   - When sandbox is provided, execute() is called instead of spawn()
- *   - Host paths are translated to /workspace equivalents
- *   - Subdirectory cwd is prefixed with `cd /workspace/subdir &&`
- *   - Sensitive env keys are scrubbed from the sandbox env
- *   - When sandbox is null (DOCKER_ENABLED=false), spawn() is used
- *   - The sandbox is constructed once in ToolExecutor and shared
  */
 
 import * as path from 'path';
@@ -23,6 +15,7 @@ import { BuildTool } from '../../tools/BuildTool';
 import { LintTool } from '../../tools/LintTool';
 import { ScriptTool } from '../../tools/ScriptTool';
 import { TestTool } from '../../tools/TestTool';
+import type { Config } from '../../config';
 
 const mockSpawn = spawn as jest.MockedFunction<typeof spawn>;
 const MockDockerSandbox = DockerSandbox as jest.MockedClass<
@@ -41,12 +34,18 @@ function makeSandboxMock(
   return mock;
 }
 
-function makeSpawnMock(exitCode = 0, stdout = '') {
-  const emitter = {
+interface MockChildProcess {
+  stdout: { on: jest.Mock };
+  stderr: { on: jest.Mock };
+  on: jest.Mock;
+}
+
+function makeSpawnMock(exitCode = 0, stdout = ''): MockChildProcess {
+  const emitter: MockChildProcess = {
     stdout: { on: jest.fn() },
     stderr: { on: jest.fn() },
     on: jest.fn(),
-  } as any;
+  };
   emitter.stdout.on.mockImplementation(
     (ev: string, cb: (data: Buffer) => void) => {
       if (ev === 'data' && stdout) cb(Buffer.from(stdout));
@@ -57,6 +56,48 @@ function makeSpawnMock(exitCode = 0, stdout = '') {
     if (ev === 'close') setTimeout(() => cb(exitCode), 0);
   });
   return emitter;
+}
+
+/** Full Config object with all required properties */
+function makeFullConfig(overrides: Partial<Config> = {}): Config {
+  return {
+    apiKey: 'k',
+    workspaceDir: '/tmp/ws',
+    hostWorkspaceDir: '/tmp/ws',
+    dbPath: ':memory:',
+    logDir: '/tmp',
+    model: 'claude-opus-4-5',
+    maxTokens: 1024,
+    maxRetries: 1,
+    apiSecret: undefined,
+    maxContextMessages: 10,
+    tokenBudget: 100_000,
+    maxToolCalls: 50,
+    maxConcurrentSessions: 3,
+    corsOrigin: 'http://localhost:5173',
+    maxPromptChars: 32_000,
+    trustProxy: false,
+    maxSearchResults: 500,
+    wsRateLimit: 30,
+    shutdownTimeout: 30_000,
+    webhookUrl: undefined,
+    maxToolResultSize: 10_240,
+    metricsEnabled: false,
+    sessionTtl: 86_400_000,
+    sessionCleanupInterval: 300_000,
+    requirePatchApproval: false,
+    apiRetryCount: 3,
+    apiRetryDelay: 1000,
+    apiRetryMaxDelay: 30_000,
+    maxToolOutputContext: 8_000,
+    debugMode: false,
+    netlifyToken: undefined,
+    netlifySiteId: undefined,
+    vercelToken: undefined,
+    dockerEnabled: true,
+    port: 3001,
+    ...overrides,
+  };
 }
 
 // ─── BuildTool sandbox routing ────────────────────────────────────────────────
@@ -87,7 +128,9 @@ describe('BuildTool sandbox routing', () => {
   });
 
   it('uses spawn() when sandbox is null', async () => {
-    mockSpawn.mockReturnValue(makeSpawnMock(0, 'done') as any);
+    mockSpawn.mockReturnValue(
+      makeSpawnMock(0, 'done') as unknown as ReturnType<typeof spawn>
+    );
     const tool = new BuildTool(workspaceDir, null);
 
     await tool.npmRun({ script: 'build', packageDir: '.', timeout: 60000 });
@@ -103,13 +146,12 @@ describe('BuildTool sandbox routing', () => {
 
     expect(sandbox.execute).toHaveBeenCalledWith(
       expect.any(String),
-      workspaceDir, // host path — DockerSandbox handles the bind mount
+      workspaceDir,
       expect.any(Object)
     );
   });
 
   it('prefixes command with cd when packageDir is a subdirectory', async () => {
-    // Create a nested package
     const subDir = path.join(workspaceDir, 'packages', 'ui');
     await fs.ensureDir(subDir);
     await fs.writeJson(path.join(subDir, 'package.json'), {
@@ -149,7 +191,9 @@ describe('BuildTool sandbox routing', () => {
   });
 
   it('returns sandboxed:false when running on host', async () => {
-    mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
+    mockSpawn.mockReturnValue(
+      makeSpawnMock(0) as unknown as ReturnType<typeof spawn>
+    );
     const tool = new BuildTool(workspaceDir, null);
     const result = await tool.tscCheck({ packageDir: '.', emitFiles: false });
     expect(result.sandboxed).toBe(false);
@@ -197,7 +241,6 @@ describe('LintTool sandbox routing', () => {
     await tool.eslintCheck({ paths: ['src'], fix: false, packageDir: '.' });
 
     const [command] = (sandbox.execute as jest.Mock).mock.calls[0];
-    // Must contain relative path, must NOT contain the host workspaceDir
     expect(command).toContain('src');
     expect(command).not.toContain(workspaceDir);
   });
@@ -207,12 +250,13 @@ describe('LintTool sandbox routing', () => {
 
 describe('ScriptTool sandbox routing', () => {
   let workspaceDir: string;
-  let scriptFile: string;
 
   beforeEach(async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sandbox-script-'));
-    scriptFile = path.join(workspaceDir, 'seed.js');
-    await fs.writeFile(scriptFile, 'console.log("seeded")');
+    await fs.writeFile(
+      path.join(workspaceDir, 'seed.js'),
+      'console.log("seeded")'
+    );
     MockDockerSandbox.mockClear();
     mockSpawn.mockReset();
   });
@@ -248,14 +292,16 @@ describe('ScriptTool sandbox routing', () => {
 
     const [command] = (sandbox.execute as jest.Mock).mock.calls[0];
     expect(command).toContain('/workspace/seed.js');
-    expect(command).not.toContain(workspaceDir); // no host path leaked
+    expect(command).not.toContain(workspaceDir);
   });
 
   it('translates nested script paths correctly', async () => {
     const nestedDir = path.join(workspaceDir, 'scripts');
-    const nestedScript = path.join(nestedDir, 'migrate.js');
     await fs.ensureDir(nestedDir);
-    await fs.writeFile(nestedScript, 'console.log("migrate")');
+    await fs.writeFile(
+      path.join(nestedDir, 'migrate.js'),
+      'console.log("migrate")'
+    );
 
     const sandbox = makeSandboxMock();
     const tool = new ScriptTool(workspaceDir, sandbox);
@@ -326,7 +372,6 @@ describe('TestTool sandbox routing', () => {
   });
 
   it('routes test run through sandbox when sandbox provided', async () => {
-    // Mock sandbox returning a plausible jest output
     const sandbox = makeSandboxMock(0, 'Tests: 3 passed, 3 total');
     const tool = new TestTool(workspaceDir, sandbox);
 
@@ -351,7 +396,6 @@ describe('TestTool sandbox routing', () => {
     });
 
     const [command] = (sandbox.execute as jest.Mock).mock.calls[0];
-    // The outputFile must point inside /workspace (not /tmp or a host path)
     if (command.includes('--outputFile=')) {
       expect(command).toContain('--outputFile=/workspace/');
       expect(command).not.toContain('--outputFile=/tmp/');
@@ -396,28 +440,11 @@ describe('ToolExecutor sandbox sharing', () => {
     MockDockerSandbox.mockClear();
 
     new ToolExecutor(
-      {
-        apiKey: 'k',
-        workspaceDir: '/tmp/ws',
-        dbPath: ':memory:',
-        logDir: '/tmp',
-        model: 'claude-opus-4-5',
-        maxTokens: 1024,
-        maxRetries: 1,
-        maxContextMessages: 10,
-        tokenBudget: 100_000,
-        maxToolCalls: 50,
-        maxConcurrentSessions: 3,
-        corsOrigin: 'http://localhost:5173',
-        maxPromptChars: 32_000,
-        dockerEnabled: true,
-        port: 3001,
-      },
+      makeFullConfig({ dockerEnabled: true }),
       mem,
       'test-session'
     );
 
-    // Only one DockerSandbox should have been constructed
     expect(MockDockerSandbox).toHaveBeenCalledTimes(1);
   });
 
@@ -429,23 +456,7 @@ describe('ToolExecutor sandbox sharing', () => {
     const mem = new DatabaseMemory(':memory:');
 
     new ToolExecutor(
-      {
-        apiKey: 'k',
-        workspaceDir: '/tmp/ws',
-        dbPath: ':memory:',
-        logDir: '/tmp',
-        model: 'claude-opus-4-5',
-        maxTokens: 1024,
-        maxRetries: 1,
-        maxContextMessages: 10,
-        tokenBudget: 100_000,
-        maxToolCalls: 50,
-        maxConcurrentSessions: 3,
-        corsOrigin: 'http://localhost:5173',
-        maxPromptChars: 32_000,
-        dockerEnabled: false,
-        port: 3001,
-      },
+      makeFullConfig({ dockerEnabled: false }),
       mem,
       'test-session'
     );

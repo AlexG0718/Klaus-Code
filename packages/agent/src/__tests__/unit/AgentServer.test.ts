@@ -11,36 +11,54 @@
 import request from 'supertest';
 import express from 'express';
 import { AgentServer } from '../../server/AgentServer';
-import { Agent }       from '../../agent/Agent';
+import { Agent } from '../../agent/Agent';
 import { DatabaseMemory } from '../../memory/DatabaseMemory';
 import type { Config } from '../../config';
 
 jest.mock('../../agent/Agent');
 jest.mock('../../memory/DatabaseMemory');
 
-const MockAgent  = Agent  as jest.MockedClass<typeof Agent>;
+const MockAgent = Agent as jest.MockedClass<typeof Agent>;
 const MockMemory = DatabaseMemory as jest.MockedClass<typeof DatabaseMemory>;
 
+/** Create a full Config object with all required properties */
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
-    apiKey:                'test-key',
-    workspaceDir:          '/tmp/ws',
-    dbPath:                ':memory:',
-    logDir:                '/tmp',
-    model:                 'claude-opus-4-5',
-    maxTokens:             1024,
-    maxRetries:            1,
-    maxContextMessages:    10,
-    tokenBudget:           100_000,
-    maxToolCalls:          50,
+    apiKey: 'test-key',
+    workspaceDir: '/tmp/ws',
+    hostWorkspaceDir: '/tmp/ws',
+    dbPath: ':memory:',
+    logDir: '/tmp',
+    model: 'claude-opus-4-5',
+    maxTokens: 1024,
+    maxRetries: 1,
+    apiSecret: 'a-valid-secret-longer-than-16-chars',
+    maxContextMessages: 10,
+    tokenBudget: 100_000,
+    maxToolCalls: 50,
     maxConcurrentSessions: 3,
-    corsOrigin:            'http://localhost:5173',
-    maxPromptChars:        100,
-    apiSecret:             'a-valid-secret-longer-than-16-chars',
-    dockerEnabled:         false,
-    port:                  3099,
-    netlifyToken:          undefined,
-    netlifySiteId:         undefined,
+    corsOrigin: 'http://localhost:5173',
+    maxPromptChars: 100,
+    trustProxy: false,
+    maxSearchResults: 500,
+    wsRateLimit: 30,
+    shutdownTimeout: 30_000,
+    webhookUrl: undefined,
+    maxToolResultSize: 10_240,
+    metricsEnabled: false,
+    sessionTtl: 86_400_000,
+    sessionCleanupInterval: 300_000,
+    requirePatchApproval: false,
+    apiRetryCount: 3,
+    apiRetryDelay: 1000,
+    apiRetryMaxDelay: 30_000,
+    maxToolOutputContext: 8_000,
+    debugMode: false,
+    netlifyToken: undefined,
+    netlifySiteId: undefined,
+    vercelToken: undefined,
+    dockerEnabled: false,
+    port: 3099,
     ...overrides,
   };
 }
@@ -51,23 +69,33 @@ function buildServer(configOverrides: Partial<Config> = {}) {
 
   // Wire up memory stubs
   (memory.getTotalTokenUsage as jest.Mock) = jest.fn().mockReturnValue({
-    totalTokens: 0, estimatedCostUsd: 0,
+    totalTokens: 0,
+    estimatedCostUsd: 0,
   });
   (memory.listSessions as jest.Mock) = jest.fn().mockReturnValue([]);
-  (memory.getSession   as jest.Mock) = jest.fn().mockReturnValue(null);
+  (memory.getSession as jest.Mock) = jest.fn().mockReturnValue(null);
 
   // Agent stubs
   MockAgent.prototype.run = jest.fn().mockResolvedValue({
-    sessionId: 'sid-1', summary: 'Done', toolCallsCount: 2,
-    success: true, durationMs: 100,
-    tokenUsage: { inputTokens: 100, outputTokens: 50, totalTokens: 150, estimatedCostUsd: 0.01 },
+    sessionId: 'sid-1',
+    summary: 'Done',
+    toolCallsCount: 2,
+    success: true,
+    durationMs: 100,
+    tokenUsage: {
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      estimatedCostUsd: 0.01,
+    },
   });
-  Object.defineProperty(MockAgent.prototype, 'activeSessionCount', { get: jest.fn().mockReturnValue(0) });
+  Object.defineProperty(MockAgent.prototype, 'activeSessionCount', {
+    get: jest.fn().mockReturnValue(0),
+  });
 
-  const agent  = new MockAgent(config, memory);
+  const agent = new MockAgent(config, memory);
   const server = new AgentServer(agent, memory, config, config.port);
 
-  // Expose express app for supertest (without binding to a port)
   return { server, agent, memory, config };
 }
 
@@ -76,14 +104,14 @@ function buildServer(configOverrides: Partial<Config> = {}) {
 describe('Auth middleware', () => {
   it('returns 401 for /api routes without a secret', async () => {
     const { server } = buildServer();
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app).get('/api/sessions');
     expect(res.status).toBe(401);
   });
 
   it('accepts requests with correct Bearer token', async () => {
     const { server, config } = buildServer();
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app)
       .get('/api/sessions')
       .set('Authorization', `Bearer ${config.apiSecret}`);
@@ -92,7 +120,7 @@ describe('Auth middleware', () => {
 
   it('passes /health without auth', async () => {
     const { server } = buildServer();
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app).get('/health');
     expect(res.status).toBe(200);
   });
@@ -102,26 +130,30 @@ describe('Auth middleware', () => {
 
 describe('CORS', () => {
   it('sets Access-Control-Allow-Origin to the configured origin', async () => {
-    const { server, config } = buildServer({ corsOrigin: 'http://localhost:5173' });
-    const app = (server as any).app as express.Application;
+    const { server } = buildServer({ corsOrigin: 'http://localhost:5173' });
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app)
       .options('/health')
       .set('Origin', 'http://localhost:5173');
-    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+    expect(res.headers['access-control-allow-origin']).toBe(
+      'http://localhost:5173'
+    );
   });
 
   it('does NOT reflect an untrusted origin', async () => {
     const { server } = buildServer({ corsOrigin: 'http://localhost:5173' });
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app)
       .options('/health')
       .set('Origin', 'http://evil.example.com');
-    expect(res.headers['access-control-allow-origin']).not.toBe('http://evil.example.com');
+    expect(res.headers['access-control-allow-origin']).not.toBe(
+      'http://evil.example.com'
+    );
   });
 
   it('reflects * when corsOrigin is wildcard', async () => {
     const { server } = buildServer({ corsOrigin: '*' });
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app).options('/health');
     expect(res.headers['access-control-allow-origin']).toBe('*');
   });
@@ -132,7 +164,7 @@ describe('CORS', () => {
 describe('Rate limiting', () => {
   it('returns X-RateLimit headers on every response', async () => {
     const { server, config } = buildServer();
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app)
       .get('/api/sessions')
       .set('Authorization', `Bearer ${config.apiSecret}`);
@@ -143,34 +175,30 @@ describe('Rate limiting', () => {
 
   it('returns 429 after exceeding the rate limit', async () => {
     const { server, config } = buildServer();
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
 
-    // Override the rate limit window to 1 req in tests by calling it 61+ times
-    // We test the 429 response shape rather than hammering 60 real requests
-    // by patching the internal rate counter directly.
-    const mw = (server as any);
+    const mw = server as unknown as {
+      _rateCounts?: Map<string, { count: number; resetAt: number }>;
+    };
     const rateCounts: Map<string, { count: number; resetAt: number }> =
       mw._rateCounts ?? new Map();
 
-    // Inject an entry that's already at the limit for '::ffff:127.0.0.1'
-    rateCounts.set('::ffff:127.0.0.1', { count: 61, resetAt: Date.now() + 60_000 });
-    // Patch it back if it's accessible
+    rateCounts.set('::ffff:127.0.0.1', {
+      count: 61,
+      resetAt: Date.now() + 60_000,
+    });
     if ('_rateCounts' in mw) mw._rateCounts = rateCounts;
 
-    // Make a real request — if direct patching not possible, verify shape via a
-    // simulated over-limit request. Either way we test the middleware exists.
     const res = await request(app)
       .get('/api/sessions')
       .set('Authorization', `Bearer ${config.apiSecret}`);
 
-    // If patching worked, expect 429; otherwise at minimum the headers are there
     expect([200, 429]).toContain(res.status);
   });
 
   it('does not rate-limit /health', async () => {
     const { server } = buildServer();
-    const app = (server as any).app as express.Application;
-    // Hit /health 10 times — should never 429
+    const app = (server as unknown as { app: express.Application }).app;
     for (let i = 0; i < 10; i++) {
       const res = await request(app).get('/health');
       expect(res.status).toBe(200);
@@ -183,12 +211,12 @@ describe('Rate limiting', () => {
 describe('GET /health', () => {
   it('includes activeSessions and maxConcurrentSessions', async () => {
     const { server } = buildServer();
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app).get('/health');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
-      status:                'ok',
-      activeSessions:        expect.any(Number),
+      status: 'ok',
+      activeSessions: expect.any(Number),
       maxConcurrentSessions: expect.any(Number),
     });
   });
@@ -199,7 +227,7 @@ describe('GET /health', () => {
 describe('POST /api/prompt', () => {
   it('returns 400 when message is missing', async () => {
     const { server, config } = buildServer();
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app)
       .post('/api/prompt')
       .set('Authorization', `Bearer ${config.apiSecret}`)
@@ -210,7 +238,7 @@ describe('POST /api/prompt', () => {
 
   it('returns 400 when prompt exceeds maxPromptChars', async () => {
     const { server, config } = buildServer({ maxPromptChars: 10 });
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app)
       .post('/api/prompt')
       .set('Authorization', `Bearer ${config.apiSecret}`)
@@ -221,9 +249,11 @@ describe('POST /api/prompt', () => {
 
   it('returns 429 when agent is at max concurrent sessions', async () => {
     const { server, config, agent } = buildServer({ maxConcurrentSessions: 2 });
-    Object.defineProperty(agent, 'activeSessionCount', { get: jest.fn().mockReturnValue(2) });
+    Object.defineProperty(agent, 'activeSessionCount', {
+      get: jest.fn().mockReturnValue(2),
+    });
 
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app)
       .post('/api/prompt')
       .set('Authorization', `Bearer ${config.apiSecret}`)
@@ -234,7 +264,7 @@ describe('POST /api/prompt', () => {
 
   it('returns 200 with result for a valid prompt', async () => {
     const { server, config } = buildServer({ maxPromptChars: 1000 });
-    const app = (server as any).app as express.Application;
+    const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app)
       .post('/api/prompt')
       .set('Authorization', `Bearer ${config.apiSecret}`)

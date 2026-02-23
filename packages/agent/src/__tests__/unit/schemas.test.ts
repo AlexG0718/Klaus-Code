@@ -1,8 +1,6 @@
 import {
   ReadFileSchema,
   WriteFileSchema,
-  ApplyPatchSchema,
-  ShellCommandSchema,
   GitCheckpointSchema,
   RunTestsSchema,
   MemorySetSchema,
@@ -39,7 +37,10 @@ describe('Tool Schemas - Zod Validation Unit Tests', () => {
     });
 
     it('should reject invalid encoding', () => {
-      const result = ReadFileSchema.safeParse({ path: 'test.ts', encoding: 'ascii' });
+      const result = ReadFileSchema.safeParse({
+        path: 'test.ts',
+        encoding: 'ascii',
+      });
       expect(result.success).toBe(false);
     });
   });
@@ -54,39 +55,11 @@ describe('Tool Schemas - Zod Validation Unit Tests', () => {
     });
 
     it('should default createDirs to true', () => {
-      const result = WriteFileSchema.safeParse({ path: 'test.ts', content: '' });
+      const result = WriteFileSchema.safeParse({
+        path: 'test.ts',
+        content: '',
+      });
       expect(result.success && result.data.createDirs).toBe(true);
-    });
-  });
-
-  describe('ShellCommandSchema', () => {
-    it('should accept valid command', () => {
-      const result = ShellCommandSchema.safeParse({
-        command: 'npm',
-        args: ['install'],
-      });
-      expect(result.success).toBe(true);
-    });
-
-    it('should reject timeout below 1000ms', () => {
-      const result = ShellCommandSchema.safeParse({
-        command: 'npm',
-        timeout: 500,
-      });
-      expect(result.success).toBe(false);
-    });
-
-    it('should reject timeout above 300000ms', () => {
-      const result = ShellCommandSchema.safeParse({
-        command: 'npm',
-        timeout: 999999,
-      });
-      expect(result.success).toBe(false);
-    });
-
-    it('should default args to empty array', () => {
-      const result = ShellCommandSchema.safeParse({ command: 'ls' });
-      expect(result.success && result.data.args).toEqual([]);
     });
   });
 
