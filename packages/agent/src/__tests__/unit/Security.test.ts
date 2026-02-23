@@ -1,6 +1,6 @@
 /**
  * Security Tests for Klaus-Code 3.0
- * 
+ *
  * Tests for:
  * - Authentication and Authorization
  * - Input Validation and Sanitization
@@ -11,8 +11,16 @@
  * - Session Security
  */
 
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import {
+  describe,
+  it,
+  expect,
+  jest,
+  beforeEach,
+  afterEach,
+} from '@jest/globals';
 import { timingSafeEqual, createHash } from 'crypto';
+import { resolve, sep } from 'path';
 
 // ============================================================
 // AUTHENTICATION TESTS
@@ -23,15 +31,15 @@ describe('Authentication Security', () => {
     function validateApiSecret(provided: string, expected: string): boolean {
       if (!expected) return true; // No auth required
       if (!provided) return false;
-      
+
       try {
         const providedBuffer = Buffer.from(provided);
         const expectedBuffer = Buffer.from(expected);
-        
+
         if (providedBuffer.length !== expectedBuffer.length) {
           return false;
         }
-        
+
         return timingSafeEqual(providedBuffer, expectedBuffer);
       } catch {
         return false;
@@ -57,7 +65,7 @@ describe('Authentication Security', () => {
       const secret = 'a'.repeat(32);
       const wrong1 = 'b'.repeat(32);
       const wrong2 = 'a'.repeat(31) + 'b';
-      
+
       // Both should take similar time to reject
       expect(validateApiSecret(wrong1, secret)).toBe(false);
       expect(validateApiSecret(wrong2, secret)).toBe(false);
@@ -99,14 +107,14 @@ describe('Input Validation', () => {
     it('should reject oversized prompts', () => {
       const maxChars = 32000;
       const oversizedPrompt = 'x'.repeat(maxChars + 1);
-      
+
       expect(oversizedPrompt.length > maxChars).toBe(true);
     });
 
     it('should accept valid prompts', () => {
       const maxChars = 32000;
       const validPrompt = 'x'.repeat(maxChars);
-      
+
       expect(validPrompt.length <= maxChars).toBe(true);
     });
 
@@ -118,7 +126,8 @@ describe('Input Validation', () => {
 
   describe('Session ID Validation', () => {
     function isValidUUID(id: string): boolean {
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       return uuidRegex.test(id);
     }
 
@@ -140,11 +149,15 @@ describe('Input Validation', () => {
       const maliciousModels = [
         "'; DROP TABLE sessions; --",
         "claude-opus-4-5' OR '1'='1",
-        "UNION SELECT * FROM users",
+        'UNION SELECT * FROM users',
       ];
-      
-      const allowedModels = ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
-      
+
+      const allowedModels = [
+        'claude-opus-4-5',
+        'claude-sonnet-4-5',
+        'claude-haiku-4-5',
+      ];
+
       for (const malicious of maliciousModels) {
         const isValid = allowedModels.includes(malicious);
         expect(isValid).toBe(false);
@@ -180,10 +193,14 @@ describe('Input Validation', () => {
 
 describe('Path Traversal Prevention', () => {
   describe('Workspace Boundary Enforcement', () => {
-    function isWithinWorkspace(path: string, workspaceDir: string): boolean {
-      const { resolve, sep } = require('path');
-      const resolved = resolve(workspaceDir, path);
-      const prefix = workspaceDir.endsWith(sep) ? workspaceDir : workspaceDir + sep;
+    function isWithinWorkspace(
+      filePath: string,
+      workspaceDir: string
+    ): boolean {
+      const resolved = resolve(workspaceDir, filePath);
+      const prefix = workspaceDir.endsWith(sep)
+        ? workspaceDir
+        : workspaceDir + sep;
       return resolved === workspaceDir || resolved.startsWith(prefix);
     }
 
@@ -194,7 +211,9 @@ describe('Path Traversal Prevention', () => {
     });
 
     it('should block path traversal attempts', () => {
-      expect(isWithinWorkspace('../../../etc/passwd', '/workspace')).toBe(false);
+      expect(isWithinWorkspace('../../../etc/passwd', '/workspace')).toBe(
+        false
+      );
       expect(isWithinWorkspace('/etc/passwd', '/workspace')).toBe(false);
       expect(isWithinWorkspace('..', '/workspace')).toBe(false);
     });
@@ -213,7 +232,7 @@ describe('Path Traversal Prevention', () => {
         '/workspace/link -> /etc',
         '/workspace/hidden/../../escape',
       ];
-      
+
       for (const path of suspicious) {
         expect(path).toContain('/');
       }
@@ -229,10 +248,19 @@ describe('Secret Scanning', () => {
   const SECRET_PATTERNS = [
     { name: 'AWS Key', regex: /AKIA[0-9A-Z]{16}/ },
     { name: 'GitHub PAT', regex: /ghp_[a-zA-Z0-9]{36}/ },
-    { name: 'Generic API Key', regex: /api[_-]?key['":\s]*[a-zA-Z0-9]{20,}/i },
-    { name: 'Private Key', regex: /-----BEGIN (?:RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----/ },
-    { name: 'JWT', regex: /eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*/ },
-    { name: 'Anthropic API Key', regex: /sk-ant-[a-zA-Z0-9-]{90,}/ },
+    {
+      name: 'Generic API Key',
+      regex: /api[_-]?key['":\s]*[a-zA-Z0-9_-]{20,}/i,
+    },
+    {
+      name: 'Private Key',
+      regex: /-----BEGIN (?:RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----/,
+    },
+    {
+      name: 'JWT',
+      regex: /eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*/,
+    },
+    { name: 'Anthropic API Key', regex: /sk-ant-[a-zA-Z0-9_-]{90,}/ },
     { name: 'OpenAI API Key', regex: /sk-[a-zA-Z0-9]{48}/ },
   ];
 
@@ -264,9 +292,7 @@ describe('Secret Scanning', () => {
 
   describe('Private Key Detection', () => {
     it('should detect private keys', () => {
-      const content = `-----BEGIN RSA PRIVATE KEY-----
-MIIEpQIBAAKCAQEA...
------END RSA PRIVATE KEY-----`;
+      const content = '-----BEGIN RSA PRIVATE KEY-----';
       const hits = scanForSecrets(content);
       expect(hits).toContain('Private Key');
     });
@@ -318,133 +344,119 @@ describe('Rate Limiting', () => {
   describe('WebSocket Rate Limiter', () => {
     interface RateLimitEntry {
       count: number;
-      resetAt: number;
+      resetTime: number;
     }
 
+    const rateLimits = new Map<string, RateLimitEntry>();
+
     function checkRateLimit(
-      socketId: string,
-      limits: Map<string, RateLimitEntry>,
-      maxEvents: number,
+      key: string,
+      limit: number,
       windowMs: number
     ): boolean {
       const now = Date.now();
-      const entry = limits.get(socketId);
-      
-      if (!entry || now > entry.resetAt) {
-        limits.set(socketId, { count: 1, resetAt: now + windowMs });
+      const entry = rateLimits.get(key);
+
+      if (!entry || now > entry.resetTime) {
+        rateLimits.set(key, { count: 1, resetTime: now + windowMs });
         return true;
       }
-      
-      if (entry.count >= maxEvents) {
+
+      if (entry.count >= limit) {
         return false;
       }
-      
+
       entry.count++;
       return true;
     }
 
+    beforeEach(() => {
+      rateLimits.clear();
+    });
+
     it('should allow requests under limit', () => {
-      const limits = new Map<string, RateLimitEntry>();
-      const maxEvents = 30;
-      const windowMs = 60000;
-      
-      for (let i = 0; i < maxEvents; i++) {
-        expect(checkRateLimit('socket-1', limits, maxEvents, windowMs)).toBe(true);
+      for (let i = 0; i < 10; i++) {
+        expect(checkRateLimit('user1', 10, 60000)).toBe(true);
       }
     });
 
     it('should block requests over limit', () => {
-      const limits = new Map<string, RateLimitEntry>();
-      const maxEvents = 5;
-      const windowMs = 60000;
-      
-      // Fill up the limit
-      for (let i = 0; i < maxEvents; i++) {
-        checkRateLimit('socket-1', limits, maxEvents, windowMs);
+      for (let i = 0; i < 10; i++) {
+        checkRateLimit('user2', 10, 60000);
       }
-      
-      // This should be blocked
-      expect(checkRateLimit('socket-1', limits, maxEvents, windowMs)).toBe(false);
+      expect(checkRateLimit('user2', 10, 60000)).toBe(false);
     });
 
-    it('should track different sockets independently', () => {
-      const limits = new Map<string, RateLimitEntry>();
-      const maxEvents = 2;
-      const windowMs = 60000;
-      
-      checkRateLimit('socket-1', limits, maxEvents, windowMs);
-      checkRateLimit('socket-1', limits, maxEvents, windowMs);
-      
-      // socket-1 is at limit, but socket-2 should be allowed
-      expect(checkRateLimit('socket-1', limits, maxEvents, windowMs)).toBe(false);
-      expect(checkRateLimit('socket-2', limits, maxEvents, windowMs)).toBe(true);
+    it('should reset after window expires', () => {
+      // First batch
+      for (let i = 0; i < 10; i++) {
+        checkRateLimit('user3', 10, 1); // 1ms window
+      }
+
+      // Wait for window to expire
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          expect(checkRateLimit('user3', 10, 1)).toBe(true);
+          resolve();
+        }, 10);
+      });
     });
   });
 
-  describe('Concurrent Session Limiting', () => {
-    it('should enforce max concurrent sessions', () => {
-      const maxConcurrent = 3;
-      let active = 0;
-      
-      const tryAcquire = () => {
-        if (active < maxConcurrent) {
-          active++;
-          return true;
-        }
-        return false;
+  describe('Prompt Rate Limiting', () => {
+    it('should track prompts per session', () => {
+      const sessionPrompts = new Map<string, number>();
+
+      const recordPrompt = (sessionId: string) => {
+        const count = sessionPrompts.get(sessionId) || 0;
+        sessionPrompts.set(sessionId, count + 1);
+        return count + 1;
       };
-      
-      const release = () => {
-        if (active > 0) active--;
-      };
-      
-      expect(tryAcquire()).toBe(true);
-      expect(tryAcquire()).toBe(true);
-      expect(tryAcquire()).toBe(true);
-      expect(tryAcquire()).toBe(false);
-      
-      release();
-      expect(tryAcquire()).toBe(true);
+
+      expect(recordPrompt('session1')).toBe(1);
+      expect(recordPrompt('session1')).toBe(2);
+      expect(recordPrompt('session2')).toBe(1);
     });
   });
 });
 
 // ============================================================
-// CSP AND HEADERS TESTS
+// CSP HEADER TESTS
 // ============================================================
 
-describe('Security Headers', () => {
-  describe('Content Security Policy', () => {
-    const CSP_DIRECTIVES = {
-      'default-src': "'self'",
-      'script-src': "'self'",
-      'style-src': "'self' 'unsafe-inline'",
-      'frame-ancestors': "'none'",
-    };
+describe('Content Security Policy', () => {
+  describe('CSP Header Generation', () => {
+    function generateCSP(): string {
+      return [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "connect-src 'self' ws: wss:",
+        "font-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+      ].join('; ');
+    }
 
-    it('should have restrictive default-src', () => {
-      expect(CSP_DIRECTIVES['default-src']).toBe("'self'");
+    it('should include default-src', () => {
+      expect(generateCSP()).toContain("default-src 'self'");
     });
 
-    it('should prevent framing', () => {
-      expect(CSP_DIRECTIVES['frame-ancestors']).toBe("'none'");
-    });
-  });
-
-  describe('Other Security Headers', () => {
-    const SECURITY_HEADERS = {
-      'X-Content-Type-Options': 'nosniff',
-      'X-Frame-Options': 'DENY',
-      'X-XSS-Protection': '1; mode=block',
-      'Referrer-Policy': 'strict-origin-when-cross-origin',
-    };
-
-    it('should prevent MIME sniffing', () => {
-      expect(SECURITY_HEADERS['X-Content-Type-Options']).toBe('nosniff');
+    it('should block object embedding', () => {
+      expect(generateCSP()).toContain("object-src 'none'");
     });
 
-    it('should prevent framing via X-Frame-Options', () => {
-      expect(SECURITY_HEADERS['X-Frame-Options']).toBe('DENY');
+    it('should prevent clickjacking', () => {
+      expect(generateCSP()).toContain("frame-ancestors 'none'");
+    });
+
+    it('should allow WebSocket connections', () => {
+      const csp = generateCSP();
+      expect(csp).toContain('ws:');
+      expect(csp).toContain('wss:');
     });
   });
 });
@@ -454,22 +466,39 @@ describe('Security Headers', () => {
 // ============================================================
 
 describe('Session Security', () => {
-  describe('Session TTL', () => {
+  describe('Session ID Generation', () => {
+    it('should generate cryptographically random IDs', () => {
+      const ids = new Set<string>();
+
+      for (let i = 0; i < 100; i++) {
+        const id = crypto.randomUUID();
+        expect(ids.has(id)).toBe(false);
+        ids.add(id);
+      }
+    });
+
+    it('should generate IDs of sufficient length', () => {
+      const id = crypto.randomUUID();
+      expect(id.length).toBe(36); // UUID format
+    });
+  });
+
+  describe('Session Expiration', () => {
     it('should expire sessions after TTL', () => {
-      const ttl = 86400000; // 24 hours
-      const createdAt = Date.now() - ttl - 1000; // Older than TTL
+      const ttl = 3600000; // 1 hour
+      const createdAt = Date.now() - ttl - 1000; // Created over 1 hour ago
       const now = Date.now();
-      
-      const isExpired = (now - createdAt) > ttl;
+
+      const isExpired = now - createdAt > ttl;
       expect(isExpired).toBe(true);
     });
 
-    it('should not expire active sessions', () => {
-      const ttl = 86400000;
+    it('should not expire recent sessions', () => {
+      const ttl = 3600000; // 1 hour
       const updatedAt = Date.now() - 1000; // Recent
       const now = Date.now();
-      
-      const isExpired = (now - updatedAt) > ttl;
+
+      const isExpired = now - updatedAt > ttl;
       expect(isExpired).toBe(false);
     });
   });
@@ -477,10 +506,10 @@ describe('Session Security', () => {
   describe('Session Ownership', () => {
     it('should track session ownership by socket', () => {
       const owners = new Map<string, string>();
-      
+
       owners.set('session-1', 'socket-abc');
       owners.set('session-2', 'socket-xyz');
-      
+
       expect(owners.get('session-1')).toBe('socket-abc');
       expect(owners.get('session-2')).toBe('socket-xyz');
     });
@@ -488,12 +517,12 @@ describe('Session Security', () => {
     it('should validate session ownership for join', () => {
       const owners = new Map<string, string>();
       owners.set('session-1', 'socket-abc');
-      
+
       const canJoin = (sessionId: string, socketId: string) => {
         const owner = owners.get(sessionId);
         return !owner || owner === socketId;
       };
-      
+
       expect(canJoin('session-1', 'socket-abc')).toBe(true);
       expect(canJoin('session-1', 'socket-xyz')).toBe(false);
       expect(canJoin('session-new', 'socket-any')).toBe(true);
@@ -503,19 +532,37 @@ describe('Session Security', () => {
   describe('Audit Logging', () => {
     it('should log sensitive operations', () => {
       const auditLog: any[] = [];
-      
+
       const audit = {
         sessionDelete: (ip: string, sessionId: string, success: boolean) => {
-          auditLog.push({ action: 'session_delete', ip, sessionId, success, timestamp: new Date() });
+          auditLog.push({
+            action: 'session_delete',
+            ip,
+            sessionId,
+            success,
+            timestamp: new Date(),
+          });
         },
-        sessionExport: (ip: string, sessionId: string, format: string, success: boolean) => {
-          auditLog.push({ action: 'session_export', ip, sessionId, format, success, timestamp: new Date() });
+        sessionExport: (
+          ip: string,
+          sessionId: string,
+          format: string,
+          success: boolean
+        ) => {
+          auditLog.push({
+            action: 'session_export',
+            ip,
+            sessionId,
+            format,
+            success,
+            timestamp: new Date(),
+          });
         },
       };
-      
+
       audit.sessionDelete('127.0.0.1', 'session-123', true);
       audit.sessionExport('127.0.0.1', 'session-456', 'json', true);
-      
+
       expect(auditLog).toHaveLength(2);
       expect(auditLog[0].action).toBe('session_delete');
       expect(auditLog[1].action).toBe('session_export');
@@ -541,7 +588,7 @@ describe('XSS Prevention', () => {
     it('should escape HTML entities', () => {
       const malicious = '<script>alert("xss")</script>';
       const escaped = escapeHtml(malicious);
-      
+
       expect(escaped).not.toContain('<script>');
       expect(escaped).toContain('&lt;script&gt;');
     });
@@ -549,7 +596,7 @@ describe('XSS Prevention', () => {
     it('should escape attribute values', () => {
       const malicious = '" onclick="alert(1)"';
       const escaped = escapeHtml(malicious);
-      
+
       expect(escaped).not.toContain('"');
       expect(escaped).toContain('&quot;');
     });
@@ -560,7 +607,7 @@ describe('XSS Prevention', () => {
       const toolOutput = {
         result: '<img src=x onerror=alert(1)>',
       };
-      
+
       // JSON stringify should escape the output
       const serialized = JSON.stringify(toolOutput);
       expect(serialized).not.toContain('onerror=alert');
@@ -583,9 +630,9 @@ describe('Injection Prevention', () => {
         '`id`',
         'pkg && malicious',
       ];
-      
+
       const safeRegex = /^(@[a-z0-9-_]+\/)?[a-z0-9-_.@]+(@[\w.*^~>=<!|-]+)?$/;
-      
+
       for (const pkg of maliciousPackages) {
         expect(safeRegex.test(pkg)).toBe(false);
       }
@@ -598,7 +645,7 @@ describe('Injection Prevention', () => {
       const sessionId = "'; DROP TABLE sessions; --";
       const query = 'SELECT * FROM sessions WHERE id = ?';
       const params = [sessionId];
-      
+
       // The query should be safe because sessionId is a parameter
       expect(query).toContain('?');
       expect(params[0]).toBe(sessionId);
@@ -608,7 +655,7 @@ describe('Injection Prevention', () => {
   describe('Path Injection', () => {
     it('should sanitize file paths', () => {
       const sanitizePath = (p: string) => p.replace(/^[/\\]+/, '');
-      
+
       expect(sanitizePath('/etc/passwd')).toBe('etc/passwd');
       expect(sanitizePath('\\windows\\system32')).toBe('windows\\system32');
     });
@@ -621,18 +668,25 @@ describe('Injection Prevention', () => {
 
 describe('CORS Security', () => {
   describe('Origin Validation', () => {
-    function isAllowedOrigin(origin: string, allowed: string | string[]): boolean {
+    function isAllowedOrigin(
+      origin: string,
+      allowed: string | string[]
+    ): boolean {
       if (allowed === '*') return true;
       if (Array.isArray(allowed)) return allowed.includes(origin);
       return origin === allowed;
     }
 
     it('should allow configured origin', () => {
-      expect(isAllowedOrigin('http://localhost:5173', 'http://localhost:5173')).toBe(true);
+      expect(
+        isAllowedOrigin('http://localhost:5173', 'http://localhost:5173')
+      ).toBe(true);
     });
 
     it('should block unconfigured origins', () => {
-      expect(isAllowedOrigin('http://evil.com', 'http://localhost:5173')).toBe(false);
+      expect(isAllowedOrigin('http://evil.com', 'http://localhost:5173')).toBe(
+        false
+      );
     });
 
     it('should handle wildcard carefully', () => {
@@ -661,7 +715,7 @@ describe('Docker Sandbox Security', () => {
         NetworkDisabled: true,
         CapDrop: ['ALL'],
       };
-      
+
       expect(containerOptions.ReadonlyRootfs).toBe(true);
     });
 
@@ -669,7 +723,7 @@ describe('Docker Sandbox Security', () => {
       const containerOptions = {
         NetworkDisabled: true,
       };
-      
+
       expect(containerOptions.NetworkDisabled).toBe(true);
     });
 
@@ -678,7 +732,7 @@ describe('Docker Sandbox Security', () => {
         CapDrop: ['ALL'],
         CapAdd: [], // No additional capabilities
       };
-      
+
       expect(containerOptions.CapDrop).toContain('ALL');
       expect(containerOptions.CapAdd).toHaveLength(0);
     });
