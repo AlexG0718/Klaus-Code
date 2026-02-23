@@ -39,7 +39,11 @@ describe('FileTool - Unit Tests', () => {
 
     it('should block writes outside workspace', async () => {
       await expect(
-        fileTool.writeFile({ path: '../outside-workspace.ts', content: 'evil', createDirs: false })
+        fileTool.writeFile({
+          path: '../outside-workspace.ts',
+          content: 'evil',
+          createDirs: false,
+        })
       ).rejects.toThrow('Access denied');
     });
 
@@ -52,15 +56,25 @@ describe('FileTool - Unit Tests', () => {
     it('should allow paths that look suspicious but resolve inside workspace', async () => {
       // src/../README.md resolves to README.md which IS inside workspace
       await fs.writeFile(path.join(workspace, 'README.md'), '# test', 'utf8');
-      const result = await fileTool.readFile({ path: 'src/../README.md', encoding: 'utf8' });
+      const result = await fileTool.readFile({
+        path: 'src/../README.md',
+        encoding: 'utf8',
+      });
       expect(result.content).toBe('# test');
     });
 
     it('should strip leading slashes and confine to workspace', async () => {
       // "/src/index.ts" should be treated as "src/index.ts" relative to workspace
       await fs.ensureDir(path.join(workspace, 'src'));
-      await fs.writeFile(path.join(workspace, 'src/index.ts'), 'export {};', 'utf8');
-      const result = await fileTool.readFile({ path: '/src/index.ts', encoding: 'utf8' });
+      await fs.writeFile(
+        path.join(workspace, 'src/index.ts'),
+        'export {};',
+        'utf8'
+      );
+      const result = await fileTool.readFile({
+        path: '/src/index.ts',
+        encoding: 'utf8',
+      });
       expect(result.content).toBe('export {};');
     });
 
@@ -80,7 +94,10 @@ describe('FileTool - Unit Tests', () => {
       const testFile = path.join(workspace, 'test.ts');
       await fs.writeFile(testFile, 'const x = 1;', 'utf8');
 
-      const result = await fileTool.readFile({ path: 'test.ts', encoding: 'utf8' });
+      const result = await fileTool.readFile({
+        path: 'test.ts',
+        encoding: 'utf8',
+      });
       expect(result.content).toBe('const x = 1;');
       expect(result.size).toBeGreaterThan(0);
     });
@@ -96,14 +113,21 @@ describe('FileTool - Unit Tests', () => {
       await fs.ensureDir(subDir);
       await fs.writeFile(path.join(subDir, 'index.ts'), 'export {};', 'utf8');
 
-      const result = await fileTool.readFile({ path: 'src/index.ts', encoding: 'utf8' });
+      const result = await fileTool.readFile({
+        path: 'src/index.ts',
+        encoding: 'utf8',
+      });
       expect(result.content).toBe('export {};');
     });
   });
 
   describe('writeFile', () => {
     it('should write a new file', async () => {
-      await fileTool.writeFile({ path: 'new.ts', content: 'const y = 2;', createDirs: true });
+      await fileTool.writeFile({
+        path: 'new.ts',
+        content: 'const y = 2;',
+        createDirs: true,
+      });
       const content = await fs.readFile(path.join(workspace, 'new.ts'), 'utf8');
       expect(content).toBe('const y = 2;');
     });
@@ -114,13 +138,26 @@ describe('FileTool - Unit Tests', () => {
         content: 'export const deep = true;',
         createDirs: true,
       });
-      expect(await fs.pathExists(path.join(workspace, 'deep/nested/file.ts'))).toBe(true);
+      expect(
+        await fs.pathExists(path.join(workspace, 'deep/nested/file.ts'))
+      ).toBe(true);
     });
 
     it('should overwrite existing file', async () => {
-      await fileTool.writeFile({ path: 'file.ts', content: 'v1', createDirs: true });
-      await fileTool.writeFile({ path: 'file.ts', content: 'v2', createDirs: true });
-      const content = await fs.readFile(path.join(workspace, 'file.ts'), 'utf8');
+      await fileTool.writeFile({
+        path: 'file.ts',
+        content: 'v1',
+        createDirs: true,
+      });
+      await fileTool.writeFile({
+        path: 'file.ts',
+        content: 'v2',
+        createDirs: true,
+      });
+      const content = await fs.readFile(
+        path.join(workspace, 'file.ts'),
+        'utf8'
+      );
       expect(content).toBe('v2');
     });
   });
@@ -128,7 +165,11 @@ describe('FileTool - Unit Tests', () => {
   describe('applyPatch', () => {
     it('should apply a valid patch', async () => {
       const original = 'const x = 1;\nconst y = 2;\n';
-      await fs.writeFile(path.join(workspace, 'patch-test.ts'), original, 'utf8');
+      await fs.writeFile(
+        path.join(workspace, 'patch-test.ts'),
+        original,
+        'utf8'
+      );
 
       const patch = `--- patch-test.ts
 +++ patch-test.ts
@@ -137,14 +178,24 @@ describe('FileTool - Unit Tests', () => {
 +const x = 42;
  const y = 2;
 `;
-      const result = await fileTool.applyPatch({ path: 'patch-test.ts', patch });
+      const result = await fileTool.applyPatch({
+        path: 'patch-test.ts',
+        patch,
+      });
       expect(result.success).toBe(true);
-      const content = await fs.readFile(path.join(workspace, 'patch-test.ts'), 'utf8');
+      const content = await fs.readFile(
+        path.join(workspace, 'patch-test.ts'),
+        'utf8'
+      );
       expect(content).toContain('const x = 42;');
     });
 
     it('should throw for invalid patch', async () => {
-      await fs.writeFile(path.join(workspace, 'file.ts'), 'original content\n', 'utf8');
+      await fs.writeFile(
+        path.join(workspace, 'file.ts'),
+        'original content\n',
+        'utf8'
+      );
       await expect(
         fileTool.applyPatch({ path: 'file.ts', patch: 'invalid patch content' })
       ).rejects.toThrow();
@@ -153,13 +204,21 @@ describe('FileTool - Unit Tests', () => {
 
   describe('deleteFile', () => {
     it('should delete a file inside workspace', async () => {
-      await fs.writeFile(path.join(workspace, 'to-delete.ts'), 'content', 'utf8');
+      await fs.writeFile(
+        path.join(workspace, 'to-delete.ts'),
+        'content',
+        'utf8'
+      );
       await fileTool.deleteFile({ path: 'to-delete.ts' });
-      expect(await fs.pathExists(path.join(workspace, 'to-delete.ts'))).toBe(false);
+      expect(await fs.pathExists(path.join(workspace, 'to-delete.ts'))).toBe(
+        false
+      );
     });
 
     it('should not throw if file does not exist', async () => {
-      await expect(fileTool.deleteFile({ path: 'non-existent.ts' })).resolves.toBeDefined();
+      await expect(
+        fileTool.deleteFile({ path: 'non-existent.ts' })
+      ).resolves.toBeDefined();
     });
   });
 
@@ -195,8 +254,16 @@ describe('FileTool - Unit Tests', () => {
 
   describe('searchInFiles', () => {
     beforeEach(async () => {
-      await fs.writeFile(path.join(workspace, 'a.ts'), 'const FOO = "bar";\nconst BAZ = "qux";', 'utf8');
-      await fs.writeFile(path.join(workspace, 'b.ts'), 'function foo() { return FOO; }', 'utf8');
+      await fs.writeFile(
+        path.join(workspace, 'a.ts'),
+        'const FOO = "bar";\nconst BAZ = "qux";',
+        'utf8'
+      );
+      await fs.writeFile(
+        path.join(workspace, 'b.ts'),
+        'function foo() { return FOO; }',
+        'utf8'
+      );
     });
 
     it('should find matching lines', async () => {
@@ -205,7 +272,8 @@ describe('FileTool - Unit Tests', () => {
         pattern: 'FOO',
         fileGlob: '**/*.ts',
       });
-      expect(results.length).toBeGreaterThan(0);
+      // searchInFiles returns { matches: [...], truncated: boolean }
+      expect(results.matches.length).toBeGreaterThan(0);
     });
 
     it('should return empty for no matches', async () => {
@@ -214,12 +282,13 @@ describe('FileTool - Unit Tests', () => {
         pattern: 'NEVER_FOUND_XYZ',
         fileGlob: '**/*.ts',
       });
-      expect(results).toHaveLength(0);
+      // searchInFiles returns { matches: [...], truncated: boolean }
+      expect(results.matches).toHaveLength(0);
     });
   });
 });
 
-describe('FileTool - Unit Tests', () => {
+describe('FileTool - Additional Unit Tests', () => {
   let workspace: string;
   let fileTool: FileTool;
 
@@ -237,7 +306,10 @@ describe('FileTool - Unit Tests', () => {
       const testFile = path.join(workspace, 'test.ts');
       await fs.writeFile(testFile, 'const x = 1;', 'utf8');
 
-      const result = await fileTool.readFile({ path: 'test.ts', encoding: 'utf8' });
+      const result = await fileTool.readFile({
+        path: 'test.ts',
+        encoding: 'utf8',
+      });
       expect(result.content).toBe('const x = 1;');
       expect(result.size).toBeGreaterThan(0);
     });
@@ -253,14 +325,21 @@ describe('FileTool - Unit Tests', () => {
       await fs.ensureDir(subDir);
       await fs.writeFile(path.join(subDir, 'index.ts'), 'export {};', 'utf8');
 
-      const result = await fileTool.readFile({ path: 'src/index.ts', encoding: 'utf8' });
+      const result = await fileTool.readFile({
+        path: 'src/index.ts',
+        encoding: 'utf8',
+      });
       expect(result.content).toBe('export {};');
     });
   });
 
   describe('writeFile', () => {
     it('should write a new file', async () => {
-      await fileTool.writeFile({ path: 'new.ts', content: 'const y = 2;', createDirs: true });
+      await fileTool.writeFile({
+        path: 'new.ts',
+        content: 'const y = 2;',
+        createDirs: true,
+      });
       const content = await fs.readFile(path.join(workspace, 'new.ts'), 'utf8');
       expect(content).toBe('const y = 2;');
     });
@@ -271,13 +350,26 @@ describe('FileTool - Unit Tests', () => {
         content: 'export const deep = true;',
         createDirs: true,
       });
-      expect(await fs.pathExists(path.join(workspace, 'deep/nested/file.ts'))).toBe(true);
+      expect(
+        await fs.pathExists(path.join(workspace, 'deep/nested/file.ts'))
+      ).toBe(true);
     });
 
     it('should overwrite existing file', async () => {
-      await fileTool.writeFile({ path: 'file.ts', content: 'v1', createDirs: true });
-      await fileTool.writeFile({ path: 'file.ts', content: 'v2', createDirs: true });
-      const content = await fs.readFile(path.join(workspace, 'file.ts'), 'utf8');
+      await fileTool.writeFile({
+        path: 'file.ts',
+        content: 'v1',
+        createDirs: true,
+      });
+      await fileTool.writeFile({
+        path: 'file.ts',
+        content: 'v2',
+        createDirs: true,
+      });
+      const content = await fs.readFile(
+        path.join(workspace, 'file.ts'),
+        'utf8'
+      );
       expect(content).toBe('v2');
     });
   });
@@ -285,7 +377,11 @@ describe('FileTool - Unit Tests', () => {
   describe('applyPatch', () => {
     it('should apply a valid patch', async () => {
       const original = 'const x = 1;\nconst y = 2;\n';
-      await fs.writeFile(path.join(workspace, 'patch-test.ts'), original, 'utf8');
+      await fs.writeFile(
+        path.join(workspace, 'patch-test.ts'),
+        original,
+        'utf8'
+      );
 
       // Create a patch that changes x=1 to x=42
       const patch = `--- patch-test.ts
@@ -295,14 +391,24 @@ describe('FileTool - Unit Tests', () => {
 +const x = 42;
  const y = 2;
 `;
-      const result = await fileTool.applyPatch({ path: 'patch-test.ts', patch });
+      const result = await fileTool.applyPatch({
+        path: 'patch-test.ts',
+        patch,
+      });
       expect(result.success).toBe(true);
-      const content = await fs.readFile(path.join(workspace, 'patch-test.ts'), 'utf8');
+      const content = await fs.readFile(
+        path.join(workspace, 'patch-test.ts'),
+        'utf8'
+      );
       expect(content).toContain('const x = 42;');
     });
 
     it('should throw for invalid patch', async () => {
-      await fs.writeFile(path.join(workspace, 'file.ts'), 'original content\n', 'utf8');
+      await fs.writeFile(
+        path.join(workspace, 'file.ts'),
+        'original content\n',
+        'utf8'
+      );
       await expect(
         fileTool.applyPatch({ path: 'file.ts', patch: 'invalid patch content' })
       ).rejects.toThrow();
@@ -311,13 +417,21 @@ describe('FileTool - Unit Tests', () => {
 
   describe('deleteFile', () => {
     it('should delete a file', async () => {
-      await fs.writeFile(path.join(workspace, 'to-delete.ts'), 'content', 'utf8');
+      await fs.writeFile(
+        path.join(workspace, 'to-delete.ts'),
+        'content',
+        'utf8'
+      );
       await fileTool.deleteFile({ path: 'to-delete.ts' });
-      expect(await fs.pathExists(path.join(workspace, 'to-delete.ts'))).toBe(false);
+      expect(await fs.pathExists(path.join(workspace, 'to-delete.ts'))).toBe(
+        false
+      );
     });
 
     it('should not throw if file does not exist', async () => {
-      await expect(fileTool.deleteFile({ path: 'non-existent.ts' })).resolves.toBeDefined();
+      await expect(
+        fileTool.deleteFile({ path: 'non-existent.ts' })
+      ).resolves.toBeDefined();
     });
   });
 
@@ -353,8 +467,16 @@ describe('FileTool - Unit Tests', () => {
 
   describe('searchInFiles', () => {
     beforeEach(async () => {
-      await fs.writeFile(path.join(workspace, 'a.ts'), 'const FOO = "bar";\nconst BAZ = "qux";', 'utf8');
-      await fs.writeFile(path.join(workspace, 'b.ts'), 'function foo() { return FOO; }', 'utf8');
+      await fs.writeFile(
+        path.join(workspace, 'a.ts'),
+        'const FOO = "bar";\nconst BAZ = "qux";',
+        'utf8'
+      );
+      await fs.writeFile(
+        path.join(workspace, 'b.ts'),
+        'function foo() { return FOO; }',
+        'utf8'
+      );
     });
 
     it('should find matching lines', async () => {
@@ -363,8 +485,13 @@ describe('FileTool - Unit Tests', () => {
         pattern: 'FOO',
         fileGlob: '**/*.ts',
       });
-      expect(results.length).toBeGreaterThan(0);
-      expect(results.every((r) => r.content.toUpperCase().includes('FOO'))).toBe(true);
+      // searchInFiles returns { matches: [...], truncated: boolean }
+      expect(results.matches.length).toBeGreaterThan(0);
+      expect(
+        results.matches.every((r: { content: string }) =>
+          r.content.toUpperCase().includes('FOO')
+        )
+      ).toBe(true);
     });
 
     it('should return empty for no matches', async () => {
@@ -373,7 +500,8 @@ describe('FileTool - Unit Tests', () => {
         pattern: 'NEVER_FOUND_XYZ',
         fileGlob: '**/*.ts',
       });
-      expect(results).toHaveLength(0);
+      // searchInFiles returns { matches: [...], truncated: boolean }
+      expect(results.matches).toHaveLength(0);
     });
   });
 });

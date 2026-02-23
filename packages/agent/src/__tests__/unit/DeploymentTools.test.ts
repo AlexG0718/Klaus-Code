@@ -26,13 +26,33 @@ jest.mock('child_process', () => {
   return {
     spawn: jest.fn(() => {
       const child = new EventEmitter();
-      (child as any).stdout = new EventEmitter();
-      (child as any).stderr = new EventEmitter();
-      (child as any).kill = jest.fn();
+      (
+        child as NodeJS.EventEmitter & {
+          stdout: NodeJS.EventEmitter;
+          stderr: NodeJS.EventEmitter;
+          kill: jest.Mock;
+        }
+      ).stdout = new EventEmitter();
+      (
+        child as NodeJS.EventEmitter & {
+          stdout: NodeJS.EventEmitter;
+          stderr: NodeJS.EventEmitter;
+          kill: jest.Mock;
+        }
+      ).stderr = new EventEmitter();
+      (
+        child as NodeJS.EventEmitter & {
+          stdout: NodeJS.EventEmitter;
+          stderr: NodeJS.EventEmitter;
+          kill: jest.Mock;
+        }
+      ).kill = jest.fn();
 
       // Simulate successful output
       setTimeout(() => {
-        (child as any).stdout.emit(
+        (
+          child as NodeJS.EventEmitter & { stdout: NodeJS.EventEmitter }
+        ).stdout.emit(
           'data',
           Buffer.from('{"url": "https://my-app.vercel.app"}')
         );
@@ -47,6 +67,18 @@ jest.mock('child_process', () => {
 const TEST_WORKSPACE = '/tmp/test-workspace';
 const TEST_PROJECT = path.join(TEST_WORKSPACE, 'my-project');
 const TEST_TF_DIR = path.join(TEST_PROJECT, 'terraform');
+
+// Default values for required schema fields
+const S3_DEFAULTS = {
+  buildDir: 'dist',
+  region: 'us-east-1',
+  deleteExisting: true,
+};
+const TF_INIT_DEFAULTS = { upgrade: false, reconfigure: false };
+const TF_PLAN_DEFAULTS = { destroy: false, out: 'tfplan' };
+const TF_APPLY_DEFAULTS = { autoApprove: false };
+const TF_DESTROY_DEFAULTS = { autoApprove: false };
+const INFRA_DEFAULTS = { type: 'static' as const, outputDir: 'terraform' };
 
 describe('Deployment Tools', () => {
   beforeEach(async () => {
@@ -219,7 +251,11 @@ describe('Deployment Tools', () => {
     describe('Security', () => {
       it('should reject directories outside workspace', async () => {
         const result = await deployToS3(
-          { directory: '../../../etc', bucketName: 'test-bucket' },
+          {
+            directory: '../../../etc',
+            bucketName: 'test-bucket',
+            ...S3_DEFAULTS,
+          },
           TEST_WORKSPACE
         );
         expect(result.success).toBe(false);
@@ -241,7 +277,7 @@ describe('Deployment Tools', () => {
 
         for (const bucket of invalidBuckets) {
           const result = await deployToS3(
-            { directory: '.', bucketName: bucket },
+            { directory: '.', bucketName: bucket, ...S3_DEFAULTS },
             TEST_PROJECT
           );
           expect(result.success).toBe(false);
@@ -258,7 +294,7 @@ describe('Deployment Tools', () => {
 
         for (const bucket of validBuckets) {
           const result = await deployToS3(
-            { directory: '.', bucketName: bucket },
+            { directory: '.', bucketName: bucket, ...S3_DEFAULTS },
             TEST_PROJECT
           );
           // May fail for other reasons, but not bucket name validation
@@ -274,6 +310,8 @@ describe('Deployment Tools', () => {
             directory: '.',
             bucketName: 'test-bucket',
             buildDir: 'nonexistent',
+            region: 'us-east-1',
+            deleteExisting: true,
           },
           TEST_PROJECT
         );
@@ -282,7 +320,7 @@ describe('Deployment Tools', () => {
 
       it('should default to dist directory', async () => {
         const result = await deployToS3(
-          { directory: '.', bucketName: 'test-bucket' },
+          { directory: '.', bucketName: 'test-bucket', ...S3_DEFAULTS },
           TEST_PROJECT
         );
         // The default buildDir is 'dist'
@@ -293,7 +331,7 @@ describe('Deployment Tools', () => {
     describe('Happy Path', () => {
       it('should deploy with minimal options', async () => {
         const result = await deployToS3(
-          { directory: '.', bucketName: 'test-bucket' },
+          { directory: '.', bucketName: 'test-bucket', ...S3_DEFAULTS },
           TEST_PROJECT
         );
         expect(result).toBeDefined();
@@ -301,7 +339,13 @@ describe('Deployment Tools', () => {
 
       it('should support custom region', async () => {
         const result = await deployToS3(
-          { directory: '.', bucketName: 'test-bucket', region: 'eu-west-1' },
+          {
+            directory: '.',
+            bucketName: 'test-bucket',
+            buildDir: 'dist',
+            region: 'eu-west-1',
+            deleteExisting: true,
+          },
           TEST_PROJECT
         );
         expect(result).toBeDefined();
@@ -313,6 +357,7 @@ describe('Deployment Tools', () => {
             directory: '.',
             bucketName: 'test-bucket',
             cloudFrontDistributionId: 'E1234567890ABC',
+            ...S3_DEFAULTS,
           },
           TEST_PROJECT
         );
@@ -346,7 +391,7 @@ output "test" {
     describe('Security', () => {
       it('should reject directories outside workspace', async () => {
         const result = await terraformInit(
-          { directory: '../../../etc' },
+          { directory: '../../../etc', ...TF_INIT_DEFAULTS },
           TEST_WORKSPACE
         );
         expect(result.success).toBe(false);
@@ -355,7 +400,11 @@ output "test" {
 
       it('should reject path traversal in var files', async () => {
         const result = await terraformPlan(
-          { directory: 'terraform', varFile: '../../../etc/passwd' },
+          {
+            directory: 'terraform',
+            varFile: '../../../etc/passwd',
+            ...TF_PLAN_DEFAULTS,
+          },
           TEST_PROJECT
         );
         expect(result.success).toBe(false);
@@ -365,7 +414,7 @@ output "test" {
     describe('Init', () => {
       it('should initialize terraform directory', async () => {
         const result = await terraformInit(
-          { directory: 'terraform' },
+          { directory: 'terraform', ...TF_INIT_DEFAULTS },
           TEST_PROJECT
         );
         // May fail if terraform not installed, but validates the path
@@ -374,7 +423,7 @@ output "test" {
 
       it('should support upgrade flag', async () => {
         const result = await terraformInit(
-          { directory: 'terraform', upgrade: true },
+          { directory: 'terraform', upgrade: true, reconfigure: false },
           TEST_PROJECT
         );
         expect(result).toBeDefined();
@@ -384,7 +433,7 @@ output "test" {
     describe('Plan', () => {
       it('should create plan output', async () => {
         const result = await terraformPlan(
-          { directory: 'terraform' },
+          { directory: 'terraform', ...TF_PLAN_DEFAULTS },
           TEST_PROJECT
         );
         expect(result).toBeDefined();
@@ -392,7 +441,7 @@ output "test" {
 
       it('should support destroy plan', async () => {
         const result = await terraformPlan(
-          { directory: 'terraform', destroy: true },
+          { directory: 'terraform', destroy: true, out: 'tfplan' },
           TEST_PROJECT
         );
         expect(result).toBeDefined();
@@ -400,7 +449,7 @@ output "test" {
 
       it('should support custom output file', async () => {
         const result = await terraformPlan(
-          { directory: 'terraform', out: 'custom-plan' },
+          { directory: 'terraform', out: 'custom-plan', destroy: false },
           TEST_PROJECT
         );
         expect(result).toBeDefined();
@@ -410,7 +459,7 @@ output "test" {
     describe('Apply', () => {
       it('should require explicit approval by default', async () => {
         const result = await terraformApply(
-          { directory: 'terraform' },
+          { directory: 'terraform', ...TF_APPLY_DEFAULTS },
           TEST_PROJECT
         );
         // Should prompt or fail without autoApprove
@@ -427,7 +476,7 @@ output "test" {
 
       it('should apply from plan file', async () => {
         const result = await terraformApply(
-          { directory: 'terraform', planFile: 'tfplan' },
+          { directory: 'terraform', planFile: 'tfplan', autoApprove: false },
           TEST_PROJECT
         );
         expect(result).toBeDefined();
@@ -437,7 +486,7 @@ output "test" {
     describe('Destroy', () => {
       it('should require explicit approval by default', async () => {
         const result = await terraformDestroy(
-          { directory: 'terraform' },
+          { directory: 'terraform', ...TF_DESTROY_DEFAULTS },
           TEST_PROJECT
         );
         expect(result).toBeDefined();
@@ -487,7 +536,7 @@ output "test" {
     describe('Security', () => {
       it('should reject directories outside workspace', async () => {
         const result = await generateInfrastructure(
-          { directory: '../../../etc', provider: 'aws' },
+          { directory: '../../../etc', provider: 'aws', ...INFRA_DEFAULTS },
           TEST_WORKSPACE
         );
         expect(result.success).toBe(false);
@@ -496,7 +545,12 @@ output "test" {
 
       it('should sanitize project names', async () => {
         const result = await generateInfrastructure(
-          { directory: '.', provider: 'aws', projectName: 'test; rm -rf /' },
+          {
+            directory: '.',
+            provider: 'aws',
+            projectName: 'test; rm -rf /',
+            ...INFRA_DEFAULTS,
+          },
           TEST_PROJECT
         );
         // Should either sanitize or reject
@@ -507,7 +561,12 @@ output "test" {
     describe('File Generation', () => {
       it('should generate terraform files', async () => {
         const result = await generateInfrastructure(
-          { directory: '.', provider: 'aws', type: 'static' },
+          {
+            directory: '.',
+            provider: 'aws',
+            type: 'static',
+            outputDir: 'terraform',
+          },
           TEST_PROJECT
         );
 
@@ -521,6 +580,7 @@ output "test" {
             directory: '.',
             provider: 'aws',
             type: 'static',
+            outputDir: 'terraform',
           },
           TEST_PROJECT
         );
@@ -533,7 +593,7 @@ output "test" {
     describe('Provider Support', () => {
       it('should support AWS provider', async () => {
         const result = await generateInfrastructure(
-          { directory: '.', provider: 'aws' },
+          { directory: '.', provider: 'aws', ...INFRA_DEFAULTS },
           TEST_PROJECT
         );
         expect(result.provider).toBe('aws');
@@ -541,7 +601,7 @@ output "test" {
 
       it('should support Vercel provider', async () => {
         const result = await generateInfrastructure(
-          { directory: '.', provider: 'vercel' },
+          { directory: '.', provider: 'vercel', ...INFRA_DEFAULTS },
           TEST_PROJECT
         );
         expect(result.provider).toBe('vercel');
@@ -549,7 +609,7 @@ output "test" {
 
       it('should support Netlify provider', async () => {
         const result = await generateInfrastructure(
-          { directory: '.', provider: 'netlify' },
+          { directory: '.', provider: 'netlify', ...INFRA_DEFAULTS },
           TEST_PROJECT
         );
         expect(result.provider).toBe('netlify');
@@ -559,7 +619,12 @@ output "test" {
     describe('Infrastructure Types', () => {
       it('should generate static site infrastructure', async () => {
         const result = await generateInfrastructure(
-          { directory: '.', provider: 'aws', type: 'static' },
+          {
+            directory: '.',
+            provider: 'aws',
+            type: 'static',
+            outputDir: 'terraform',
+          },
           TEST_PROJECT
         );
         expect(result.infrastructureType).toBe('static');
@@ -567,7 +632,12 @@ output "test" {
 
       it('should generate serverless infrastructure', async () => {
         const result = await generateInfrastructure(
-          { directory: '.', provider: 'aws', type: 'serverless' },
+          {
+            directory: '.',
+            provider: 'aws',
+            type: 'serverless',
+            outputDir: 'terraform',
+          },
           TEST_PROJECT
         );
         expect(result.infrastructureType).toBe('serverless');
@@ -575,7 +645,12 @@ output "test" {
 
       it('should generate container infrastructure', async () => {
         const result = await generateInfrastructure(
-          { directory: '.', provider: 'aws', type: 'container' },
+          {
+            directory: '.',
+            provider: 'aws',
+            type: 'container',
+            outputDir: 'terraform',
+          },
           TEST_PROJECT
         );
         expect(result.infrastructureType).toBe('container');
@@ -591,14 +666,19 @@ output "test" {
     it('should allow full workflow: generate → init → plan', async () => {
       // 1. Generate infrastructure
       const genResult = await generateInfrastructure(
-        { directory: '.', provider: 'aws', type: 'static' },
+        {
+          directory: '.',
+          provider: 'aws',
+          type: 'static',
+          outputDir: 'terraform',
+        },
         TEST_PROJECT
       );
       expect(genResult.success).toBe(true);
 
       // 2. Init should find the generated .tf files
       const initResult = await terraformInit(
-        { directory: 'terraform' },
+        { directory: 'terraform', ...TF_INIT_DEFAULTS },
         TEST_PROJECT
       );
       // Will fail if terraform not installed, but validates the flow
@@ -613,7 +693,12 @@ output "test" {
 
       for (const provider of ['aws', 'vercel', 'netlify'] as const) {
         const result = await generateInfrastructure(
-          { directory: '.', provider, projectName: unsafeName },
+          {
+            directory: '.',
+            provider,
+            projectName: unsafeName,
+            ...INFRA_DEFAULTS,
+          },
           TEST_PROJECT
         );
 

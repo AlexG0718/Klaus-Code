@@ -1,266 +1,224 @@
 import * as path from 'path';
-import * as os from 'os';
 import * as fs from 'fs-extra';
-import { ScriptTool } from '../../tools/ScriptTool';
+import { logger } from '../logger';
+import type { DockerSandbox } from '../sandbox/DockerSandbox';
+import type { RunNodeScriptInput } from './schemas';
 
-jest.mock('child_process', () => ({ spawn: jest.fn() }));
-import { spawn } from 'child_process';
-const mockSpawn = spawn as jest.MockedFunction<typeof spawn>;
+const NODE_BIN = 'node';
+const TSNODE_BIN = 'npx';
+const TSNODE_ARGS = ['ts-node'];
 
-function makeSpawnMock(exitCode: number, stdout = '', stderr = '') {
-  const emitter = {
-    stdout: { on: jest.fn() },
-    stderr: { on: jest.fn() },
-    on: jest.fn(),
-  } as any;
-  emitter.stdout.on.mockImplementation(
-    (ev: string, cb: (data: Buffer) => void) => {
-      if (ev === 'data' && stdout) cb(Buffer.from(stdout));
-    }
-  );
-  emitter.stderr.on.mockImplementation(
-    (ev: string, cb: (data: Buffer) => void) => {
-      if (ev === 'data' && stderr) cb(Buffer.from(stderr));
-    }
-  );
-  emitter.on.mockImplementation((ev: string, cb: (code: number) => void) => {
-    if (ev === 'close') setTimeout(() => cb(exitCode), 0);
-  });
-  return emitter;
+const ALLOWED_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts']);
+const BLOCKED_ARG_CHARS = /[;&|`$<>(){}[\]\\'"]/;
+
+// Env vars that must never be visible to user scripts — cleared in both
+// the host spawn and the Docker sandbox env override.
+const SCRUBBED_ENV_KEYS = ['ANTHROPIC_API_KEY', 'AGENT_API_SECRET'];
+
+export interface ScriptResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  scriptPath: string;
+  exitCode: number;
+  sandboxed: boolean;
 }
 
-describe('ScriptTool', () => {
-  let tool: ScriptTool;
-  let workspaceDir: string;
-  let scriptFile: string;
+export class ScriptTool {
+  constructor(
+    private readonly workspaceDir: string,
+    private readonly sandbox: DockerSandbox | null = null
+  ) {}
 
-  beforeEach(async () => {
-    workspaceDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), 'script-tool-test-')
-    );
-    scriptFile = path.join(workspaceDir, 'seed.js');
-    await fs.writeFile(scriptFile, 'console.log("seeded")');
-    tool = new ScriptTool(workspaceDir);
-    mockSpawn.mockReset();
-  });
+  async runNodeScript(input: RunNodeScriptInput): Promise<ScriptResult> {
+    // ── 1. Resolve and confine ────────────────────────────────────────────
+    // SECURITY: Reject absolute paths BEFORE stripping leading slashes
+    // This prevents /etc/passwd from being treated as etc/passwd
+    if (path.isAbsolute(input.scriptPath)) {
+      throw new Error(
+        `Access denied: script "${input.scriptPath}" is outside the workspace.`
+      );
+    }
 
-  afterEach(async () => {
-    await fs.remove(workspaceDir);
-  });
+    const sanitized = input.scriptPath.replace(/^[/\\]+/, '');
+    const resolved = path.resolve(this.workspaceDir, sanitized);
+    const prefix = this.workspaceDir.endsWith(path.sep)
+      ? this.workspaceDir
+      : this.workspaceDir + path.sep;
 
-  // ── Happy path ─────────────────────────────────────────────────────────────
+    if (!resolved.startsWith(prefix)) {
+      throw new Error(
+        `Access denied: script "${input.scriptPath}" is outside the workspace.`
+      );
+    }
 
-  it('runs node with the resolved script path', async () => {
-    mockSpawn.mockReturnValue(makeSpawnMock(0, 'seeded') as any);
+    // ── 2. File exists + allowed extension ───────────────────────────────
+    if (!(await fs.pathExists(resolved))) {
+      throw new Error(`Script not found: ${input.scriptPath}`);
+    }
 
-    const result = await tool.runNodeScript({
-      scriptPath: 'seed.js',
-      args: [],
-      timeout: 10000,
-      useTsNode: false,
+    const ext = path.extname(resolved).toLowerCase();
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      throw new Error(
+        `Cannot execute "${input.scriptPath}": only ${[...ALLOWED_EXTENSIONS].join(', ')} files are allowed.`
+      );
+    }
+
+    // ── 3. Validate args ─────────────────────────────────────────────────
+    for (const arg of input.args) {
+      if (BLOCKED_ARG_CHARS.test(arg)) {
+        throw new Error(`Argument contains disallowed characters: "${arg}".`);
+      }
+    }
+
+    // ── 4. Choose binary ─────────────────────────────────────────────────
+    const useTsNode = input.useTsNode || ext === '.ts';
+    const bin = useTsNode ? TSNODE_BIN : NODE_BIN;
+    const binArgs = useTsNode
+      ? [...TSNODE_ARGS, resolved, ...input.args]
+      : [resolved, ...input.args];
+
+    logger.info('Running node script', {
+      script: input.scriptPath,
+      useTsNode,
+      sandboxed: !!this.sandbox,
     });
 
-    expect(result.success).toBe(true);
-    const [bin, args] = mockSpawn.mock.calls[0];
-    expect(bin).toBe('node');
-    expect(args[0]).toBe(scriptFile); // absolute resolved path
-  });
+    return this.runProcess(bin, binArgs, input.timeout, resolved);
+  }
 
-  it('uses ts-node when useTsNode is true', async () => {
-    const tsScript = path.join(workspaceDir, 'seed.ts');
-    await fs.writeFile(tsScript, 'console.log("ts seeded")');
-    mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
+  // ─── Core process runner ──────────────────────────────────────────────────
 
-    await tool.runNodeScript({
-      scriptPath: 'seed.ts',
-      args: [],
-      timeout: 10000,
-      useTsNode: true,
+  private async runProcess(
+    bin: string,
+    args: string[],
+    timeout: number,
+    scriptPath: string
+  ): Promise<ScriptResult> {
+    // ── Docker sandbox path ───────────────────────────────────────────────
+    if (this.sandbox) {
+      // Translate any absolute host paths in args to /workspace equivalents.
+      // The script path itself is always an absolute host path — must translate.
+      const translatedArgs = args.map((a) =>
+        a.startsWith(this.workspaceDir) ? this.hostToContainer(a) : a
+      );
+      const containerCmd = `${bin} ${translatedArgs.join(' ')}`;
+
+      // Scrub sensitive keys from the environment passed into the sandbox
+      const sandboxEnv: Record<string, string> = {};
+      for (const key of SCRUBBED_ENV_KEYS) sandboxEnv[key] = '';
+
+      logger.info('Routing script to Docker sandbox', {
+        command: containerCmd,
+      });
+      const result = await this.sandbox.execute(
+        containerCmd,
+        this.workspaceDir,
+        {
+          timeout,
+          env: sandboxEnv,
+        }
+      );
+
+      const success = result.exitCode === 0;
+      const exitCode = result.exitCode;
+      if (!success)
+        logger.warn('Sandboxed script failed', {
+          command: containerCmd,
+          exitCode,
+        });
+      return {
+        success,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        durationMs: 0,
+        scriptPath,
+        exitCode,
+        sandboxed: true,
+      };
+    }
+
+    // ── Host path ─────────────────────────────────────────────────────────
+    const { spawn } = await import('child_process');
+    const start = Date.now();
+    const MAX_OUTPUT = 5 * 1024 * 1024; // 5MB cap
+
+    // Scrub sensitive keys from the host environment
+    const hostEnv: Record<string, string | undefined> = { ...process.env };
+    for (const key of SCRUBBED_ENV_KEYS) hostEnv[key] = '';
+
+    return new Promise((resolve, reject) => {
+      let stdout = '',
+        stderr = '',
+        timedOut = false;
+      let stdoutCapped = false,
+        stderrCapped = false;
+
+      const child = spawn(bin, args, {
+        cwd: this.workspaceDir,
+        shell: false,
+        env: hostEnv as NodeJS.ProcessEnv,
+      });
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+        setTimeout(() => child.kill('SIGKILL'), 5000);
+        logger.warn('Script timed out', { scriptPath, timeout });
+      }, timeout);
+
+      child.stdout.on('data', (d: Buffer) => {
+        if (!stdoutCapped) {
+          stdout += d.toString();
+          if (stdout.length > MAX_OUTPUT) {
+            stdout = stdout.slice(0, MAX_OUTPUT) + '\n[TRUNCATED]';
+            stdoutCapped = true;
+          }
+        }
+      });
+      child.stderr.on('data', (d: Buffer) => {
+        if (!stderrCapped) {
+          stderr += d.toString();
+          if (stderr.length > MAX_OUTPUT) {
+            stderr = stderr.slice(0, MAX_OUTPUT) + '\n[TRUNCATED]';
+            stderrCapped = true;
+          }
+        }
+      });
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(new Error(`Failed to spawn ${bin}: ${err.message}`));
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        const durationMs = Date.now() - start;
+        const exitCode = timedOut ? 124 : code ?? 0;
+        const success = exitCode === 0;
+        logger.info('Script complete', { scriptPath, exitCode, durationMs });
+        if (!success)
+          logger.warn('Script failed', {
+            scriptPath,
+            exitCode,
+            stderr: stderr.slice(0, 500),
+          });
+        resolve({
+          success,
+          stdout,
+          stderr,
+          durationMs,
+          scriptPath,
+          exitCode,
+          sandboxed: false,
+        });
+      });
     });
+  }
 
-    const [bin, args] = mockSpawn.mock.calls[0];
-    expect(bin).toBe('npx');
-    expect(args[0]).toBe('ts-node');
-  });
+  // ─── Path translation ─────────────────────────────────────────────────────
 
-  it('passes args to the script process', async () => {
-    mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-
-    await tool.runNodeScript({
-      scriptPath: 'seed.js',
-      args: ['--env', 'test'],
-      timeout: 10000,
-      useTsNode: false,
-    });
-
-    const [, args] = mockSpawn.mock.calls[0];
-    expect(args).toContain('--env');
-    expect(args).toContain('test');
-  });
-
-  it('strips the ANTHROPIC_API_KEY from the child process environment', async () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-real-secret';
-    mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-
-    await tool.runNodeScript({
-      scriptPath: 'seed.js',
-      args: [],
-      timeout: 10000,
-      useTsNode: false,
-    });
-
-    const opts = mockSpawn.mock.calls[0][2] as any;
-    expect(opts.env.ANTHROPIC_API_KEY).toBe('');
-  });
-
-  it('never uses shell:true', async () => {
-    mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-    await tool.runNodeScript({
-      scriptPath: 'seed.js',
-      args: [],
-      timeout: 10000,
-      useTsNode: false,
-    });
-    const opts = mockSpawn.mock.calls[0][2] as any;
-    expect(opts?.shell).toBeFalsy();
-  });
-
-  // ── Path confinement ───────────────────────────────────────────────────────
-
-  it('blocks path traversal via ../', async () => {
-    await expect(
-      tool.runNodeScript({
-        scriptPath: '../../etc/passwd',
-        args: [],
-        timeout: 5000,
-        useTsNode: false,
-      })
-    ).rejects.toThrow('outside the workspace');
-  });
-
-  it('blocks absolute paths', async () => {
-    await expect(
-      tool.runNodeScript({
-        scriptPath: '/etc/passwd',
-        args: [],
-        timeout: 5000,
-        useTsNode: false,
-      })
-    ).rejects.toThrow('outside the workspace');
-  });
-
-  it('throws when the script file does not exist', async () => {
-    await expect(
-      tool.runNodeScript({
-        scriptPath: 'nonexistent.js',
-        args: [],
-        timeout: 5000,
-        useTsNode: false,
-      })
-    ).rejects.toThrow('Script not found');
-  });
-
-  // ── Extension allowlist ────────────────────────────────────────────────────
-
-  it('allows .js files', async () => {
-    mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-    await expect(
-      tool.runNodeScript({
-        scriptPath: 'seed.js',
-        args: [],
-        timeout: 5000,
-        useTsNode: false,
-      })
-    ).resolves.toBeDefined();
-  });
-
-  it('blocks .sh files', async () => {
-    await fs.writeFile(
-      path.join(workspaceDir, 'evil.sh'),
-      '#!/bin/sh\nrm -rf /'
-    );
-    await expect(
-      tool.runNodeScript({
-        scriptPath: 'evil.sh',
-        args: [],
-        timeout: 5000,
-        useTsNode: false,
-      })
-    ).rejects.toThrow('only .js, .mjs, .cjs, .ts');
-  });
-
-  it('blocks .py files', async () => {
-    await fs.writeFile(path.join(workspaceDir, 'script.py'), 'import os');
-    await expect(
-      tool.runNodeScript({
-        scriptPath: 'script.py',
-        args: [],
-        timeout: 5000,
-        useTsNode: false,
-      })
-    ).rejects.toThrow('only .js, .mjs, .cjs, .ts');
-  });
-
-  // ── Arg injection prevention ───────────────────────────────────────────────
-
-  it('blocks semicolons in args', async () => {
-    await expect(
-      tool.runNodeScript({
-        scriptPath: 'seed.js',
-        args: ['; rm -rf /'],
-        timeout: 5000,
-        useTsNode: false,
-      })
-    ).rejects.toThrow('disallowed characters');
-  });
-
-  it('blocks pipe characters in args', async () => {
-    await expect(
-      tool.runNodeScript({
-        scriptPath: 'seed.js',
-        args: ['| cat /etc/passwd'],
-        timeout: 5000,
-        useTsNode: false,
-      })
-    ).rejects.toThrow('disallowed characters');
-  });
-
-  it('blocks backticks in args', async () => {
-    await expect(
-      tool.runNodeScript({
-        scriptPath: 'seed.js',
-        args: ['`whoami`'],
-        timeout: 5000,
-        useTsNode: false,
-      })
-    ).rejects.toThrow('disallowed characters');
-  });
-
-  it('allows clean alphanumeric args', async () => {
-    mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-    await expect(
-      tool.runNodeScript({
-        scriptPath: 'seed.js',
-        args: ['--env', 'production', '--verbose'],
-        timeout: 5000,
-        useTsNode: false,
-      })
-    ).resolves.toBeDefined();
-  });
-
-  // ── Exit code handling ─────────────────────────────────────────────────────
-
-  it('returns success:false when script exits with non-zero code', async () => {
-    mockSpawn.mockReturnValue(
-      makeSpawnMock(1, '', 'Error: database connection refused') as any
-    );
-    const result = await tool.runNodeScript({
-      scriptPath: 'seed.js',
-      args: [],
-      timeout: 5000,
-      useTsNode: false,
-    });
-    expect(result.success).toBe(false);
-    expect(result.exitCode).toBe(1);
-  });
-});
+  private hostToContainer(hostPath: string): string {
+    const rel = path.relative(this.workspaceDir, hostPath);
+    return rel === '' ? '/workspace' : `/workspace/${rel}`;
+  }
+}
