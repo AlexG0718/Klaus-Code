@@ -371,7 +371,7 @@ describe('Conversation Export', () => {
 
     it('should escape special markdown characters', () => {
       const escapeMarkdown = (text: string) => {
-        return text.replace(/([*_`#\[\]])/g, '\\$1');
+        return text.replace(/([*_`#[\]])/g, '\\$1');
       };
 
       const text = 'Use *bold* and _italic_ and `code`';
