@@ -130,7 +130,9 @@ describe('Agent safety limits', () => {
       const agent = new Agent(makeConfig({ maxPromptChars: 10 }), mockMemory);
       try {
         await agent.run('x'.repeat(11));
-      } catch {}
+      } catch {
+        /* expected rejection */
+      }
       expect(agent.activeSessionCount).toBe(0);
     });
   });
@@ -205,7 +207,9 @@ describe('Agent safety limits', () => {
       const agent = new Agent(makeConfig(), mockMemory);
       try {
         await agent.run('will fail');
-      } catch {}
+      } catch {
+        /* expected failure */
+      }
       expect(agent.activeSessionCount).toBe(0);
     });
 

@@ -10,24 +10,38 @@
  */
 
 import * as path from 'path';
-import * as os   from 'os';
-import * as fs   from 'fs-extra';
+import * as os from 'os';
+import * as fs from 'fs-extra';
 import { deployToNetlify } from '../../tools/DeployTool';
 
 jest.mock('child_process', () => ({ spawn: jest.fn() }));
 jest.mock('../../tools/BuildTool');
 
-import { spawn }     from 'child_process';
+import { spawn } from 'child_process';
 import { BuildTool } from '../../tools/BuildTool';
 
-const mockSpawn     = spawn     as jest.MockedFunction<typeof spawn>;
+const mockSpawn = spawn as jest.MockedFunction<typeof spawn>;
 const MockBuildTool = BuildTool as jest.MockedClass<typeof BuildTool>;
 
 function makeSpawnMock(exitCode: number, stdout = '', stderr = '') {
-  const emitter = { stdout: { on: jest.fn() }, stderr: { on: jest.fn() }, on: jest.fn() } as any;
-  emitter.stdout.on.mockImplementation((ev: string, cb: Function) => { if (ev === 'data' && stdout) cb(Buffer.from(stdout)); });
-  emitter.stderr.on.mockImplementation((ev: string, cb: Function) => { if (ev === 'data' && stderr) cb(Buffer.from(stderr)); });
-  emitter.on.mockImplementation((ev: string, cb: Function) => { if (ev === 'close') setTimeout(() => cb(exitCode), 0); });
+  const emitter = {
+    stdout: { on: jest.fn() },
+    stderr: { on: jest.fn() },
+    on: jest.fn(),
+  } as any;
+  emitter.stdout.on.mockImplementation(
+    (ev: string, cb: (data: Buffer) => void) => {
+      if (ev === 'data' && stdout) cb(Buffer.from(stdout));
+    }
+  );
+  emitter.stderr.on.mockImplementation(
+    (ev: string, cb: (data: Buffer) => void) => {
+      if (ev === 'data' && stderr) cb(Buffer.from(stderr));
+    }
+  );
+  emitter.on.mockImplementation((ev: string, cb: (code: number) => void) => {
+    if (ev === 'close') setTimeout(() => cb(exitCode), 0);
+  });
   return emitter;
 }
 
@@ -37,25 +51,35 @@ describe('DeployTool', () => {
 
   beforeEach(async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'deploy-test-'));
-    publishDir   = path.join(workspaceDir, 'dist');
+    publishDir = path.join(workspaceDir, 'dist');
     await fs.ensureDir(publishDir);
     await fs.writeJson(path.join(workspaceDir, 'package.json'), {
-      name: 'test', scripts: { build: 'tsc' },
+      name: 'test',
+      scripts: { build: 'tsc' },
     });
 
     jest.clearAllMocks();
 
     // Default: build succeeds
     MockBuildTool.prototype.npmRun = jest.fn().mockResolvedValue({
-      success: true, stdout: 'Build complete', stderr: '', durationMs: 500, command: 'npm run build',
+      success: true,
+      stdout: 'Build complete',
+      stderr: '',
+      durationMs: 500,
+      command: 'npm run build',
     });
 
     // Default: Netlify CLI succeeds with a URL
-    const netlifyJson = JSON.stringify({ deploy_id: 'abc123', deploy_url: 'https://abc123.netlify.app' });
+    const netlifyJson = JSON.stringify({
+      deploy_id: 'abc123',
+      deploy_url: 'https://abc123.netlify.app',
+    });
     mockSpawn.mockReturnValue(makeSpawnMock(0, netlifyJson) as any);
   });
 
-  afterEach(async () => { await fs.remove(workspaceDir); });
+  afterEach(async () => {
+    await fs.remove(workspaceDir);
+  });
 
   // ── ShellTool is gone ──────────────────────────────────────────────────────
 
@@ -70,7 +94,11 @@ describe('DeployTool', () => {
   // ── Build step ────────────────────────────────────────────────────────────
 
   it('calls BuildTool.npmRun with the build script name', async () => {
-    await deployToNetlify({ workspaceDir, publishDir: 'dist', buildCommand: 'build' });
+    await deployToNetlify({
+      workspaceDir,
+      publishDir: 'dist',
+      buildCommand: 'build',
+    });
     expect(MockBuildTool.prototype.npmRun).toHaveBeenCalledWith(
       expect.objectContaining({ script: 'build' })
     );
@@ -78,7 +106,11 @@ describe('DeployTool', () => {
 
   it('returns success:false and does not spawn Netlify CLI when build fails', async () => {
     MockBuildTool.prototype.npmRun = jest.fn().mockResolvedValue({
-      success: false, stdout: '', stderr: 'tsc error TS2345', durationMs: 200, command: 'npm run build',
+      success: false,
+      stdout: '',
+      stderr: 'tsc error TS2345',
+      durationMs: 200,
+      command: 'npm run build',
     });
 
     const result = await deployToNetlify({ workspaceDir, publishDir: 'dist' });
@@ -98,7 +130,9 @@ describe('DeployTool', () => {
 
   it('passes auth token as NETLIFY_AUTH_TOKEN env var, not as a CLI arg', async () => {
     await deployToNetlify({
-      workspaceDir, publishDir: 'dist', authToken: 'test-token-abc',
+      workspaceDir,
+      publishDir: 'dist',
+      authToken: 'test-token-abc',
     });
 
     const [, args, opts] = mockSpawn.mock.calls[0] as any;
@@ -111,19 +145,31 @@ describe('DeployTool', () => {
   });
 
   it('adds --prod flag for production environment', async () => {
-    await deployToNetlify({ workspaceDir, publishDir: 'dist', environment: 'production' });
+    await deployToNetlify({
+      workspaceDir,
+      publishDir: 'dist',
+      environment: 'production',
+    });
     const [, args] = mockSpawn.mock.calls[0] as any;
     expect(args).toContain('--prod');
   });
 
   it('does not add --prod flag for preview environment', async () => {
-    await deployToNetlify({ workspaceDir, publishDir: 'dist', environment: 'preview' });
+    await deployToNetlify({
+      workspaceDir,
+      publishDir: 'dist',
+      environment: 'preview',
+    });
     const [, args] = mockSpawn.mock.calls[0] as any;
     expect(args).not.toContain('--prod');
   });
 
   it('includes --site flag when siteId provided', async () => {
-    await deployToNetlify({ workspaceDir, publishDir: 'dist', siteId: 'my-site-id' });
+    await deployToNetlify({
+      workspaceDir,
+      publishDir: 'dist',
+      siteId: 'my-site-id',
+    });
     const [, args] = mockSpawn.mock.calls[0] as any;
     expect(args.join(' ')).toContain('--site=my-site-id');
   });
@@ -147,7 +193,10 @@ describe('DeployTool', () => {
   // ── Result parsing ────────────────────────────────────────────────────────
 
   it('parses deploy URL from Netlify JSON output', async () => {
-    const json = JSON.stringify({ deploy_id: 'xyz789', deploy_url: 'https://xyz789.netlify.app' });
+    const json = JSON.stringify({
+      deploy_id: 'xyz789',
+      deploy_url: 'https://xyz789.netlify.app',
+    });
     mockSpawn.mockReturnValue(makeSpawnMock(0, json) as any);
 
     const result = await deployToNetlify({ workspaceDir, publishDir: 'dist' });
@@ -166,7 +215,9 @@ describe('DeployTool', () => {
   });
 
   it('returns success:false when Netlify CLI exits with non-zero', async () => {
-    mockSpawn.mockReturnValue(makeSpawnMock(1, '', 'Error: site not found') as any);
+    mockSpawn.mockReturnValue(
+      makeSpawnMock(1, '', 'Error: site not found') as any
+    );
     const result = await deployToNetlify({ workspaceDir, publishDir: 'dist' });
     expect(result.success).toBe(false);
     expect(result.logs).toContain('Error: site not found');

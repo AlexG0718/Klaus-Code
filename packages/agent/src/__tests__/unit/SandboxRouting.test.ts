@@ -11,25 +11,31 @@
  */
 
 import * as path from 'path';
-import * as os   from 'os';
-import * as fs   from 'fs-extra';
+import * as os from 'os';
+import * as fs from 'fs-extra';
 
 jest.mock('child_process', () => ({ spawn: jest.fn() }));
 jest.mock('../../sandbox/DockerSandbox');
 
-import { spawn }         from 'child_process';
+import { spawn } from 'child_process';
 import { DockerSandbox } from '../../sandbox/DockerSandbox';
-import { BuildTool }     from '../../tools/BuildTool';
-import { LintTool }      from '../../tools/LintTool';
-import { ScriptTool }    from '../../tools/ScriptTool';
-import { TestTool }      from '../../tools/TestTool';
+import { BuildTool } from '../../tools/BuildTool';
+import { LintTool } from '../../tools/LintTool';
+import { ScriptTool } from '../../tools/ScriptTool';
+import { TestTool } from '../../tools/TestTool';
 
-const mockSpawn          = spawn as jest.MockedFunction<typeof spawn>;
-const MockDockerSandbox  = DockerSandbox as jest.MockedClass<typeof DockerSandbox>;
+const mockSpawn = spawn as jest.MockedFunction<typeof spawn>;
+const MockDockerSandbox = DockerSandbox as jest.MockedClass<
+  typeof DockerSandbox
+>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeSandboxMock(exitCode = 0, stdout = 'ok', stderr = ''): jest.Mocked<DockerSandbox> {
+function makeSandboxMock(
+  exitCode = 0,
+  stdout = 'ok',
+  stderr = ''
+): jest.Mocked<DockerSandbox> {
   const mock = new MockDockerSandbox() as jest.Mocked<DockerSandbox>;
   mock.execute = jest.fn().mockResolvedValue({ exitCode, stdout, stderr });
   return mock;
@@ -37,11 +43,19 @@ function makeSandboxMock(exitCode = 0, stdout = 'ok', stderr = ''): jest.Mocked<
 
 function makeSpawnMock(exitCode = 0, stdout = '') {
   const emitter = {
-    stdout: { on: jest.fn() }, stderr: { on: jest.fn() }, on: jest.fn(),
+    stdout: { on: jest.fn() },
+    stderr: { on: jest.fn() },
+    on: jest.fn(),
   } as any;
-  emitter.stdout.on.mockImplementation((ev: string, cb: Function) => { if (ev === 'data' && stdout) cb(Buffer.from(stdout)); });
+  emitter.stdout.on.mockImplementation(
+    (ev: string, cb: (data: Buffer) => void) => {
+      if (ev === 'data' && stdout) cb(Buffer.from(stdout));
+    }
+  );
   emitter.stderr.on.mockImplementation(() => {});
-  emitter.on.mockImplementation((ev: string, cb: Function) => { if (ev === 'close') setTimeout(() => cb(exitCode), 0); });
+  emitter.on.mockImplementation((ev: string, cb: (code: number) => void) => {
+    if (ev === 'close') setTimeout(() => cb(exitCode), 0);
+  });
   return emitter;
 }
 
@@ -58,7 +72,9 @@ describe('BuildTool sandbox routing', () => {
     MockDockerSandbox.mockClear();
     mockSpawn.mockReset();
   });
-  afterEach(async () => { await fs.remove(workspaceDir); });
+  afterEach(async () => {
+    await fs.remove(workspaceDir);
+  });
 
   it('calls sandbox.execute() instead of spawn() when sandbox is provided', async () => {
     const sandbox = makeSandboxMock();
@@ -87,8 +103,8 @@ describe('BuildTool sandbox routing', () => {
 
     expect(sandbox.execute).toHaveBeenCalledWith(
       expect.any(String),
-      workspaceDir,          // host path — DockerSandbox handles the bind mount
-      expect.any(Object),
+      workspaceDir, // host path — DockerSandbox handles the bind mount
+      expect.any(Object)
     );
   });
 
@@ -96,12 +112,18 @@ describe('BuildTool sandbox routing', () => {
     // Create a nested package
     const subDir = path.join(workspaceDir, 'packages', 'ui');
     await fs.ensureDir(subDir);
-    await fs.writeJson(path.join(subDir, 'package.json'), { scripts: { build: 'vite build' } });
+    await fs.writeJson(path.join(subDir, 'package.json'), {
+      scripts: { build: 'vite build' },
+    });
 
     const sandbox = makeSandboxMock();
     const tool = new BuildTool(workspaceDir, sandbox);
 
-    await tool.npmRun({ script: 'build', packageDir: 'packages/ui', timeout: 60000 });
+    await tool.npmRun({
+      script: 'build',
+      packageDir: 'packages/ui',
+      timeout: 60000,
+    });
 
     const [command] = (sandbox.execute as jest.Mock).mock.calls[0];
     expect(command).toContain('cd /workspace/packages/ui &&');
@@ -144,7 +166,9 @@ describe('LintTool sandbox routing', () => {
     MockDockerSandbox.mockClear();
     mockSpawn.mockReset();
   });
-  afterEach(async () => { await fs.remove(workspaceDir); });
+  afterEach(async () => {
+    await fs.remove(workspaceDir);
+  });
 
   it('routes eslint through sandbox when sandbox provided', async () => {
     const sandbox = makeSandboxMock();
@@ -183,22 +207,29 @@ describe('LintTool sandbox routing', () => {
 
 describe('ScriptTool sandbox routing', () => {
   let workspaceDir: string;
-  let scriptFile:   string;
+  let scriptFile: string;
 
   beforeEach(async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sandbox-script-'));
-    scriptFile   = path.join(workspaceDir, 'seed.js');
+    scriptFile = path.join(workspaceDir, 'seed.js');
     await fs.writeFile(scriptFile, 'console.log("seeded")');
     MockDockerSandbox.mockClear();
     mockSpawn.mockReset();
   });
-  afterEach(async () => { await fs.remove(workspaceDir); });
+  afterEach(async () => {
+    await fs.remove(workspaceDir);
+  });
 
   it('routes script execution through sandbox when sandbox provided', async () => {
     const sandbox = makeSandboxMock();
     const tool = new ScriptTool(workspaceDir, sandbox);
 
-    await tool.runNodeScript({ scriptPath: 'seed.js', args: [], timeout: 10000, useTsNode: false });
+    await tool.runNodeScript({
+      scriptPath: 'seed.js',
+      args: [],
+      timeout: 10000,
+      useTsNode: false,
+    });
 
     expect(sandbox.execute).toHaveBeenCalledTimes(1);
     expect(mockSpawn).not.toHaveBeenCalled();
@@ -208,7 +239,12 @@ describe('ScriptTool sandbox routing', () => {
     const sandbox = makeSandboxMock();
     const tool = new ScriptTool(workspaceDir, sandbox);
 
-    await tool.runNodeScript({ scriptPath: 'seed.js', args: [], timeout: 10000, useTsNode: false });
+    await tool.runNodeScript({
+      scriptPath: 'seed.js',
+      args: [],
+      timeout: 10000,
+      useTsNode: false,
+    });
 
     const [command] = (sandbox.execute as jest.Mock).mock.calls[0];
     expect(command).toContain('/workspace/seed.js');
@@ -216,7 +252,7 @@ describe('ScriptTool sandbox routing', () => {
   });
 
   it('translates nested script paths correctly', async () => {
-    const nestedDir    = path.join(workspaceDir, 'scripts');
+    const nestedDir = path.join(workspaceDir, 'scripts');
     const nestedScript = path.join(nestedDir, 'migrate.js');
     await fs.ensureDir(nestedDir);
     await fs.writeFile(nestedScript, 'console.log("migrate")');
@@ -224,7 +260,12 @@ describe('ScriptTool sandbox routing', () => {
     const sandbox = makeSandboxMock();
     const tool = new ScriptTool(workspaceDir, sandbox);
 
-    await tool.runNodeScript({ scriptPath: 'scripts/migrate.js', args: [], timeout: 10000, useTsNode: false });
+    await tool.runNodeScript({
+      scriptPath: 'scripts/migrate.js',
+      args: [],
+      timeout: 10000,
+      useTsNode: false,
+    });
 
     const [command] = (sandbox.execute as jest.Mock).mock.calls[0];
     expect(command).toContain('/workspace/scripts/migrate.js');
@@ -235,7 +276,12 @@ describe('ScriptTool sandbox routing', () => {
     const sandbox = makeSandboxMock();
     const tool = new ScriptTool(workspaceDir, sandbox);
 
-    await tool.runNodeScript({ scriptPath: 'seed.js', args: [], timeout: 10000, useTsNode: false });
+    await tool.runNodeScript({
+      scriptPath: 'seed.js',
+      args: [],
+      timeout: 10000,
+      useTsNode: false,
+    });
 
     const [, , options] = (sandbox.execute as jest.Mock).mock.calls[0];
     expect(options.env.ANTHROPIC_API_KEY).toBe('');
@@ -248,7 +294,12 @@ describe('ScriptTool sandbox routing', () => {
     const sandbox = makeSandboxMock();
     const tool = new ScriptTool(workspaceDir, sandbox);
 
-    await tool.runNodeScript({ scriptPath: 'seed.js', args: [], timeout: 10000, useTsNode: false });
+    await tool.runNodeScript({
+      scriptPath: 'seed.js',
+      args: [],
+      timeout: 10000,
+      useTsNode: false,
+    });
 
     const [, , options] = (sandbox.execute as jest.Mock).mock.calls[0];
     expect(options.env.AGENT_API_SECRET).toBe('');
@@ -264,18 +315,26 @@ describe('TestTool sandbox routing', () => {
 
   beforeEach(async () => {
     workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sandbox-test-'));
-    await fs.writeJson(path.join(workspaceDir, 'package.json'), { scripts: { test: 'jest' } });
+    await fs.writeJson(path.join(workspaceDir, 'package.json'), {
+      scripts: { test: 'jest' },
+    });
     MockDockerSandbox.mockClear();
     mockSpawn.mockReset();
   });
-  afterEach(async () => { await fs.remove(workspaceDir); });
+  afterEach(async () => {
+    await fs.remove(workspaceDir);
+  });
 
   it('routes test run through sandbox when sandbox provided', async () => {
     // Mock sandbox returning a plausible jest output
     const sandbox = makeSandboxMock(0, 'Tests: 3 passed, 3 total');
     const tool = new TestTool(workspaceDir, sandbox);
 
-    await tool.runTests({ type: 'unit', coverage: false, updateSnapshots: false });
+    await tool.runTests({
+      type: 'unit',
+      coverage: false,
+      updateSnapshots: false,
+    });
 
     expect(sandbox.execute).toHaveBeenCalledTimes(1);
     expect(mockSpawn).not.toHaveBeenCalled();
@@ -285,7 +344,11 @@ describe('TestTool sandbox routing', () => {
     const sandbox = makeSandboxMock(0, 'Tests: 1 passed');
     const tool = new TestTool(workspaceDir, sandbox);
 
-    await tool.runTests({ type: 'all', coverage: false, updateSnapshots: false });
+    await tool.runTests({
+      type: 'all',
+      coverage: false,
+      updateSnapshots: false,
+    });
 
     const [command] = (sandbox.execute as jest.Mock).mock.calls[0];
     // The outputFile must point inside /workspace (not /tmp or a host path)
@@ -298,12 +361,19 @@ describe('TestTool sandbox routing', () => {
   it('prefixes command with cd for a test subdirectory', async () => {
     const subDir = path.join(workspaceDir, 'packages', 'core');
     await fs.ensureDir(subDir);
-    await fs.writeJson(path.join(subDir, 'package.json'), { scripts: { test: 'jest' } });
+    await fs.writeJson(path.join(subDir, 'package.json'), {
+      scripts: { test: 'jest' },
+    });
 
     const sandbox = makeSandboxMock(0, 'Tests: 2 passed');
     const tool = new TestTool(workspaceDir, sandbox);
 
-    await tool.runTests({ directory: 'packages/core', type: 'all', coverage: false, updateSnapshots: false });
+    await tool.runTests({
+      directory: 'packages/core',
+      type: 'all',
+      coverage: false,
+      updateSnapshots: false,
+    });
 
     const [command] = (sandbox.execute as jest.Mock).mock.calls[0];
     expect(command).toContain('cd /workspace/packages/core &&');
@@ -314,26 +384,37 @@ describe('TestTool sandbox routing', () => {
 
 describe('ToolExecutor sandbox sharing', () => {
   it('creates exactly one DockerSandbox instance when dockerEnabled is true', async () => {
-    const { ToolExecutor } = require('../../tools/ToolExecutor');
-    const { DatabaseMemory } = require('../../memory/DatabaseMemory');
+    const { ToolExecutor } = await import('../../tools/ToolExecutor');
+    const { DatabaseMemory } = await import('../../memory/DatabaseMemory');
 
     jest.mock('../../memory/DatabaseMemory');
     const mem = new DatabaseMemory(':memory:');
     mem.recordToolCall = jest.fn();
-    mem.getKnowledge   = jest.fn().mockReturnValue(undefined);
-    mem.setKnowledge   = jest.fn();
+    mem.getKnowledge = jest.fn().mockReturnValue(undefined);
+    mem.setKnowledge = jest.fn();
 
     MockDockerSandbox.mockClear();
 
     new ToolExecutor(
       {
-        apiKey: 'k', workspaceDir: '/tmp/ws', dbPath: ':memory:', logDir: '/tmp',
-        model: 'claude-opus-4-5', maxTokens: 1024, maxRetries: 1,
-        maxContextMessages: 10, tokenBudget: 100_000, maxToolCalls: 50,
-        maxConcurrentSessions: 3, corsOrigin: 'http://localhost:5173',
-        maxPromptChars: 32_000, dockerEnabled: true, port: 3001,
+        apiKey: 'k',
+        workspaceDir: '/tmp/ws',
+        dbPath: ':memory:',
+        logDir: '/tmp',
+        model: 'claude-opus-4-5',
+        maxTokens: 1024,
+        maxRetries: 1,
+        maxContextMessages: 10,
+        tokenBudget: 100_000,
+        maxToolCalls: 50,
+        maxConcurrentSessions: 3,
+        corsOrigin: 'http://localhost:5173',
+        maxPromptChars: 32_000,
+        dockerEnabled: true,
+        port: 3001,
       },
-      mem, 'test-session'
+      mem,
+      'test-session'
     );
 
     // Only one DockerSandbox should have been constructed
@@ -341,21 +422,32 @@ describe('ToolExecutor sandbox sharing', () => {
   });
 
   it('creates no DockerSandbox when dockerEnabled is false', async () => {
-    const { ToolExecutor } = require('../../tools/ToolExecutor');
+    const { ToolExecutor } = await import('../../tools/ToolExecutor');
     MockDockerSandbox.mockClear();
 
-    const { DatabaseMemory } = require('../../memory/DatabaseMemory');
+    const { DatabaseMemory } = await import('../../memory/DatabaseMemory');
     const mem = new DatabaseMemory(':memory:');
 
     new ToolExecutor(
       {
-        apiKey: 'k', workspaceDir: '/tmp/ws', dbPath: ':memory:', logDir: '/tmp',
-        model: 'claude-opus-4-5', maxTokens: 1024, maxRetries: 1,
-        maxContextMessages: 10, tokenBudget: 100_000, maxToolCalls: 50,
-        maxConcurrentSessions: 3, corsOrigin: 'http://localhost:5173',
-        maxPromptChars: 32_000, dockerEnabled: false, port: 3001,
+        apiKey: 'k',
+        workspaceDir: '/tmp/ws',
+        dbPath: ':memory:',
+        logDir: '/tmp',
+        model: 'claude-opus-4-5',
+        maxTokens: 1024,
+        maxRetries: 1,
+        maxContextMessages: 10,
+        tokenBudget: 100_000,
+        maxToolCalls: 50,
+        maxConcurrentSessions: 3,
+        corsOrigin: 'http://localhost:5173',
+        maxPromptChars: 32_000,
+        dockerEnabled: false,
+        port: 3001,
       },
-      mem, 'test-session'
+      mem,
+      'test-session'
     );
 
     expect(MockDockerSandbox).not.toHaveBeenCalled();
