@@ -520,7 +520,7 @@ output "test" {
 
       it('should retrieve specific output', async () => {
         const result = await terraformOutput(
-          { directory: 'terraform', name: 'test' },
+          { directory: 'terraform', json: true, name: 'test' },
           TEST_PROJECT
         );
         expect(result).toBeDefined();
@@ -571,7 +571,8 @@ output "test" {
         );
 
         expect(result.success).toBe(true);
-        expect(result.files).toBeDefined();
+        // InfrastructureResult has outputDir, not files
+        expect(result.outputDir).toBeDefined();
       });
 
       it('should include deployment instructions', async () => {
