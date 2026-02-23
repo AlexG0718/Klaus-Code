@@ -18,13 +18,17 @@ function makeSpawnMock(exitCode: number, stdout = '', stderr = '') {
     on: jest.fn(),
   } as any;
 
-  emitter.stdout.on.mockImplementation((event: string, cb: Function) => {
-    if (event === 'data' && stdout) cb(Buffer.from(stdout));
-  });
-  emitter.stderr.on.mockImplementation((event: string, cb: Function) => {
-    if (event === 'data' && stderr) cb(Buffer.from(stderr));
-  });
-  emitter.on.mockImplementation((event: string, cb: Function) => {
+  emitter.stdout.on.mockImplementation(
+    (event: string, cb: (data: Buffer) => void) => {
+      if (event === 'data' && stdout) cb(Buffer.from(stdout));
+    }
+  );
+  emitter.stderr.on.mockImplementation(
+    (event: string, cb: (data: Buffer) => void) => {
+      if (event === 'data' && stderr) cb(Buffer.from(stderr));
+    }
+  );
+  emitter.on.mockImplementation((event: string, cb: (code: number) => void) => {
     if (event === 'close') setTimeout(() => cb(exitCode), 0);
   });
 
@@ -55,7 +59,11 @@ describe('BuildTool', () => {
     it('runs "npm install" with no args when packages list is empty', async () => {
       mockSpawn.mockReturnValue(makeSpawnMock(0, 'added 42 packages') as any);
 
-      const result = await tool.npmInstall({ packages: [], packageDir: '.', saveDev: false });
+      const result = await tool.npmInstall({
+        packages: [],
+        packageDir: '.',
+        saveDev: false,
+      });
 
       expect(result.success).toBe(true);
       const [bin, args] = mockSpawn.mock.calls[0];
@@ -66,7 +74,11 @@ describe('BuildTool', () => {
     it('passes package names as separate args — never as a single string', async () => {
       mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
 
-      await tool.npmInstall({ packages: ['lodash', 'zod'], packageDir: '.', saveDev: false });
+      await tool.npmInstall({
+        packages: ['lodash', 'zod'],
+        packageDir: '.',
+        saveDev: false,
+      });
 
       const [, args] = mockSpawn.mock.calls[0];
       expect(args).toEqual(['install', 'lodash', 'zod']);
@@ -75,7 +87,11 @@ describe('BuildTool', () => {
     it('adds --save-dev flag when saveDev is true', async () => {
       mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
 
-      await tool.npmInstall({ packages: ['jest'], packageDir: '.', saveDev: true });
+      await tool.npmInstall({
+        packages: ['jest'],
+        packageDir: '.',
+        saveDev: true,
+      });
 
       const [, args] = mockSpawn.mock.calls[0];
       expect(args).toContain('--save-dev');
@@ -83,13 +99,21 @@ describe('BuildTool', () => {
 
     it('rejects package names containing shell metacharacters', async () => {
       await expect(
-        tool.npmInstall({ packages: ['lodash; rm -rf /'], packageDir: '.', saveDev: false })
+        tool.npmInstall({
+          packages: ['lodash; rm -rf /'],
+          packageDir: '.',
+          saveDev: false,
+        })
       ).rejects.toThrow('Invalid package name');
     });
 
     it('rejects path traversal in packageDir', async () => {
       await expect(
-        tool.npmInstall({ packages: [], packageDir: '../../etc', saveDev: false })
+        tool.npmInstall({
+          packages: [],
+          packageDir: '../../etc',
+          saveDev: false,
+        })
       ).rejects.toThrow('outside the workspace');
     });
 
@@ -101,9 +125,15 @@ describe('BuildTool', () => {
     });
 
     it('returns success:false and captures stderr on non-zero exit', async () => {
-      mockSpawn.mockReturnValue(makeSpawnMock(1, '', 'npm ERR! code ENOENT') as any);
+      mockSpawn.mockReturnValue(
+        makeSpawnMock(1, '', 'npm ERR! code ENOENT') as any
+      );
 
-      const result = await tool.npmInstall({ packages: [], packageDir: '.', saveDev: false });
+      const result = await tool.npmInstall({
+        packages: [],
+        packageDir: '.',
+        saveDev: false,
+      });
       expect(result.success).toBe(false);
       expect(result.stderr).toContain('npm ERR!');
     });
@@ -123,7 +153,11 @@ describe('BuildTool', () => {
     it('runs "npm run <script>" for a script that exists in package.json', async () => {
       mockSpawn.mockReturnValue(makeSpawnMock(0, 'Build complete') as any);
 
-      const result = await tool.npmRun({ script: 'build', packageDir: '.', timeout: 60000 });
+      const result = await tool.npmRun({
+        script: 'build',
+        packageDir: '.',
+        timeout: 60000,
+      });
 
       expect(result.success).toBe(true);
       const [bin, args] = mockSpawn.mock.calls[0];
@@ -147,7 +181,9 @@ describe('BuildTool', () => {
       mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
 
       await tool.npmRun({
-        script: 'build', packageDir: '.', timeout: 60000,
+        script: 'build',
+        packageDir: '.',
+        timeout: 60000,
         env: { NODE_ENV: 'production' },
       });
 
@@ -180,7 +216,9 @@ describe('BuildTool', () => {
     });
 
     it('returns success:false when TypeScript errors exist', async () => {
-      mockSpawn.mockReturnValue(makeSpawnMock(2, '', 'error TS2345: Argument of type') as any);
+      mockSpawn.mockReturnValue(
+        makeSpawnMock(2, '', 'error TS2345: Argument of type') as any
+      );
 
       const result = await tool.tscCheck({ packageDir: '.', emitFiles: false });
       expect(result.success).toBe(false);

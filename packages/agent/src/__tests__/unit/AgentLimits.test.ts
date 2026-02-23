@@ -11,8 +11,8 @@
  */
 
 import { Agent, AgentEvent } from '../../agent/Agent';
-import { DatabaseMemory }    from '../../memory/DatabaseMemory';
-import type { Config }       from '../../config';
+import { DatabaseMemory } from '../../memory/DatabaseMemory';
+import type { Config } from '../../config';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -27,11 +27,14 @@ const MockAnthropic = Anthropic as jest.MockedClass<typeof Anthropic>;
 // Build a fake streaming response that returns end_turn immediately
 function makeStreamResponse(inputTokens = 1000, outputTokens = 500) {
   const fakeStream = {
-    on:           jest.fn((event: string, cb: Function) => { if (event === 'text') cb('Done.'); return fakeStream; }),
+    on: jest.fn((event: string, cb: (...args: unknown[]) => void) => {
+      if (event === 'text') cb('Done.');
+      return fakeStream;
+    }),
     finalMessage: jest.fn().mockResolvedValue({
-      content:     [{ type: 'text', text: 'Done.' }],
+      content: [{ type: 'text', text: 'Done.' }],
       stop_reason: 'end_turn',
-      usage:       { input_tokens: inputTokens, output_tokens: outputTokens },
+      usage: { input_tokens: inputTokens, output_tokens: outputTokens },
     }),
     abort: jest.fn(),
   };
@@ -40,37 +43,39 @@ function makeStreamResponse(inputTokens = 1000, outputTokens = 500) {
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
-    apiKey:                'test-key',
-    workspaceDir:          '/tmp/test-workspace',
-    dbPath:                ':memory:',
-    logDir:                '/tmp/logs',
-    model:                 'claude-opus-4-5',
-    maxTokens:             1024,
-    maxRetries:            1,
-    maxContextMessages:    10,
-    tokenBudget:           100_000,
-    maxToolCalls:          50,
+    apiKey: 'test-key',
+    workspaceDir: '/tmp/test-workspace',
+    dbPath: ':memory:',
+    logDir: '/tmp/logs',
+    model: 'claude-opus-4-5',
+    maxTokens: 1024,
+    maxRetries: 1,
+    maxContextMessages: 10,
+    tokenBudget: 100_000,
+    maxToolCalls: 50,
     maxConcurrentSessions: 2,
-    corsOrigin:            'http://localhost:5173',
-    maxPromptChars:        32_000,
-    dockerEnabled:         false,
-    port:                  3001,
+    corsOrigin: 'http://localhost:5173',
+    maxPromptChars: 32_000,
+    dockerEnabled: false,
+    port: 3001,
     ...overrides,
   };
 }
 
 function makeMemory(): jest.Mocked<DatabaseMemory> {
   const m = new DatabaseMemory(':memory:') as jest.Mocked<DatabaseMemory>;
-  m.getSession       = jest.fn().mockReturnValue(null);
-  m.createSession    = jest.fn();
-  m.addMessage       = jest.fn();
-  m.getMessages      = jest.fn().mockReturnValue([]);
+  m.getSession = jest.fn().mockReturnValue(null);
+  m.createSession = jest.fn();
+  m.addMessage = jest.fn();
+  m.getMessages = jest.fn().mockReturnValue([]);
   m.recordTokenUsage = jest.fn();
-  m.recordToolCall   = jest.fn();
-  m.listKnowledge    = jest.fn().mockReturnValue([]);
+  m.recordToolCall = jest.fn();
+  m.listKnowledge = jest.fn().mockReturnValue([]);
   m.getSessionTokenUsage = jest.fn().mockReturnValue({
-    inputTokens: 1000, outputTokens: 500,
-    totalTokens: 1500, estimatedCostUsd: 0.02,
+    inputTokens: 1000,
+    outputTokens: 500,
+    totalTokens: 1500,
+    estimatedCostUsd: 0.02,
   });
   m.updateSessionSummary = jest.fn();
   return m;
@@ -78,7 +83,11 @@ function makeMemory(): jest.Mocked<DatabaseMemory> {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function collectEvents(agent: Agent, message: string, sessionId?: string): {
+function collectEvents(
+  agent: Agent,
+  message: string,
+  sessionId?: string
+): {
   events: AgentEvent[];
   runPromise: Promise<any>;
 } {
@@ -107,7 +116,9 @@ describe('Agent safety limits', () => {
   describe('prompt size guard', () => {
     it('rejects prompts larger than maxPromptChars', async () => {
       const agent = new Agent(makeConfig({ maxPromptChars: 100 }), mockMemory);
-      await expect(agent.run('x'.repeat(101))).rejects.toThrow('Prompt too large');
+      await expect(agent.run('x'.repeat(101))).rejects.toThrow(
+        'Prompt too large'
+      );
     });
 
     it('accepts prompts exactly at the limit', async () => {
@@ -117,7 +128,11 @@ describe('Agent safety limits', () => {
 
     it('does not decrement activeSessions below zero when prompt rejected', async () => {
       const agent = new Agent(makeConfig({ maxPromptChars: 10 }), mockMemory);
-      try { await agent.run('x'.repeat(11)); } catch {}
+      try {
+        await agent.run('x'.repeat(11));
+      } catch {
+        /* expected rejection */
+      }
       expect(agent.activeSessionCount).toBe(0);
     });
   });
@@ -131,16 +146,21 @@ describe('Agent safety limits', () => {
 
       // Make the first run take long enough for the second to arrive
       let resolveFirst!: () => void;
-      const firstRunBlock = new Promise<void>((res) => { resolveFirst = res; });
+      const firstRunBlock = new Promise<void>((res) => {
+        resolveFirst = res;
+      });
 
       MockAnthropic.prototype.messages = {
-        stream: jest.fn()
+        stream: jest
+          .fn()
           .mockReturnValueOnce({
             on: jest.fn().mockReturnThis(),
-            finalMessage: () => firstRunBlock.then(() => ({
-              content: [], stop_reason: 'end_turn',
-              usage: { input_tokens: 100, output_tokens: 50 },
-            })),
+            finalMessage: () =>
+              firstRunBlock.then(() => ({
+                content: [],
+                stop_reason: 'end_turn',
+                usage: { input_tokens: 100, output_tokens: 50 },
+              })),
             abort: jest.fn(),
           })
           .mockReturnValue(makeStreamResponse()),
@@ -154,7 +174,9 @@ describe('Agent safety limits', () => {
       await new Promise((r) => setTimeout(r, 10));
 
       // Second run should be rejected
-      await expect(agent.run('second task', 'session-2')).rejects.toThrow('Too many concurrent sessions');
+      await expect(agent.run('second task', 'session-2')).rejects.toThrow(
+        'Too many concurrent sessions'
+      );
 
       // Release the first run
       resolveFirst();
@@ -183,7 +205,11 @@ describe('Agent safety limits', () => {
       } as any;
 
       const agent = new Agent(makeConfig(), mockMemory);
-      try { await agent.run('will fail'); } catch {}
+      try {
+        await agent.run('will fail');
+      } catch {
+        /* expected failure */
+      }
       expect(agent.activeSessionCount).toBe(0);
     });
 
@@ -199,10 +225,13 @@ describe('Agent safety limits', () => {
   describe('tool call limit', () => {
     it('emits tool_limit_exceeded and halts when limit is reached', async () => {
       // Make every API call return a tool_use so the loop never ends naturally
-      const { ToolExecutor } = require('../../tools/ToolExecutor');
+      const { ToolExecutor } = await import('../../tools/ToolExecutor');
       ToolExecutor.prototype.execute = jest.fn().mockResolvedValue({
-        toolCallId: 'tc-1', toolName: 'read_file',
-        result: { content: 'file contents' }, success: true, durationMs: 5,
+        toolCallId: 'tc-1',
+        toolName: 'read_file',
+        result: { content: 'file contents' },
+        success: true,
+        durationMs: 5,
       });
 
       let callCount = 0;
@@ -212,7 +241,14 @@ describe('Agent safety limits', () => {
           return {
             on: jest.fn().mockReturnThis(),
             finalMessage: jest.fn().mockResolvedValue({
-              content: [{ type: 'tool_use', id: `tu-${callCount}`, name: 'read_file', input: { path: 'index.ts' } }],
+              content: [
+                {
+                  type: 'tool_use',
+                  id: `tu-${callCount}`,
+                  name: 'read_file',
+                  input: { path: 'index.ts' },
+                },
+              ],
               stop_reason: 'tool_use',
               usage: { input_tokens: 100, output_tokens: 50 },
             }),
@@ -221,7 +257,10 @@ describe('Agent safety limits', () => {
         }),
       } as any;
 
-      const agent = new Agent(makeConfig({ maxToolCalls: 3, tokenBudget: 0 }), mockMemory);
+      const agent = new Agent(
+        makeConfig({ maxToolCalls: 3, tokenBudget: 0 }),
+        mockMemory
+      );
       const events: AgentEvent[] = [];
 
       await agent.run('do stuff', undefined, (e) => events.push(e));
@@ -236,7 +275,9 @@ describe('Agent safety limits', () => {
       const agent = new Agent(makeConfig({ maxToolCalls: 0 }), mockMemory);
       const events: AgentEvent[] = [];
       await agent.run('normal', undefined, (e) => events.push(e));
-      expect(events.find((e) => e.type === 'tool_limit_exceeded')).toBeUndefined();
+      expect(
+        events.find((e) => e.type === 'tool_limit_exceeded')
+      ).toBeUndefined();
     });
   });
 
@@ -253,9 +294,17 @@ describe('Agent safety limits', () => {
           return {
             on: jest.fn().mockReturnThis(),
             finalMessage: jest.fn().mockResolvedValue({
-              content: stopReason === 'end_turn'
-                ? [{ type: 'text', text: 'Done.' }]
-                : [{ type: 'tool_use', id: `tu-${turn}`, name: 'read_file', input: { path: 'f.ts' } }],
+              content:
+                stopReason === 'end_turn'
+                  ? [{ type: 'text', text: 'Done.' }]
+                  : [
+                      {
+                        type: 'tool_use',
+                        id: `tu-${turn}`,
+                        name: 'read_file',
+                        input: { path: 'f.ts' },
+                      },
+                    ],
               stop_reason: stopReason,
               usage: { input_tokens: 5_000, output_tokens: 5_000 }, // 10k per turn
             }),
@@ -264,12 +313,19 @@ describe('Agent safety limits', () => {
         }),
       } as any;
 
-      const { ToolExecutor } = require('../../tools/ToolExecutor');
+      const { ToolExecutor } = await import('../../tools/ToolExecutor');
       ToolExecutor.prototype.execute = jest.fn().mockResolvedValue({
-        toolCallId: 'tc', toolName: 'read_file', result: {}, success: true, durationMs: 1,
+        toolCallId: 'tc',
+        toolName: 'read_file',
+        result: {},
+        success: true,
+        durationMs: 1,
       });
 
-      const agent = new Agent(makeConfig({ tokenBudget: 100_000, maxToolCalls: 0 }), mockMemory);
+      const agent = new Agent(
+        makeConfig({ tokenBudget: 100_000, maxToolCalls: 0 }),
+        mockMemory
+      );
       const events: AgentEvent[] = [];
 
       await agent.run('go', undefined, (e) => events.push(e));
