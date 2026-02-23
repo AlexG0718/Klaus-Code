@@ -1,6 +1,6 @@
 /**
  * Deployment Tools Test Suite
- * 
+ *
  * Tests for Vercel, AWS S3, and Terraform deployment tools.
  * Covers security, validation, and happy path scenarios.
  */
@@ -9,33 +9,40 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import { deployToVercel } from '../../tools/VercelTool';
 import { deployToS3 } from '../../tools/AWSTool';
-import { 
-  terraformInit, 
-  terraformPlan, 
-  terraformApply, 
+import {
+  terraformInit,
+  terraformPlan,
+  terraformApply,
   terraformDestroy,
-  terraformOutput 
+  terraformOutput,
 } from '../../tools/TerraformTool';
 import { generateInfrastructure } from '../../tools/InfrastructureGenerator';
 
 // Mock child_process to avoid actual CLI calls
-jest.mock('child_process', () => ({
-  spawn: jest.fn(() => {
-    const EventEmitter = require('events');
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    child.kill = jest.fn();
-    
-    // Simulate successful output
-    setTimeout(() => {
-      child.stdout.emit('data', Buffer.from('{"url": "https://my-app.vercel.app"}'));
-      child.emit('close', 0);
-    }, 10);
-    
-    return child;
-  }),
-}));
+jest.mock('child_process', () => {
+  // Use jest.requireActual to get EventEmitter (doesn't trigger no-var-requires)
+  const { EventEmitter } =
+    jest.requireActual<typeof import('events')>('events');
+  return {
+    spawn: jest.fn(() => {
+      const child = new EventEmitter();
+      (child as any).stdout = new EventEmitter();
+      (child as any).stderr = new EventEmitter();
+      (child as any).kill = jest.fn();
+
+      // Simulate successful output
+      setTimeout(() => {
+        (child as any).stdout.emit(
+          'data',
+          Buffer.from('{"url": "https://my-app.vercel.app"}')
+        );
+        child.emit('close', 0);
+      }, 10);
+
+      return child;
+    }),
+  };
+});
 
 const TEST_WORKSPACE = '/tmp/test-workspace';
 const TEST_PROJECT = path.join(TEST_WORKSPACE, 'my-project');
@@ -46,7 +53,10 @@ describe('Deployment Tools', () => {
     // Create test directory structure
     await fs.ensureDir(TEST_PROJECT);
     await fs.ensureDir(path.join(TEST_PROJECT, 'dist'));
-    await fs.writeFile(path.join(TEST_PROJECT, 'dist', 'index.html'), '<html></html>');
+    await fs.writeFile(
+      path.join(TEST_PROJECT, 'dist', 'index.html'),
+      '<html></html>'
+    );
     await fs.writeJson(path.join(TEST_PROJECT, 'package.json'), {
       name: 'test-project',
       version: '1.0.0',
@@ -89,7 +99,9 @@ describe('Deployment Tools', () => {
           'test-token'
         );
         expect(result.success).toBe(false);
-        expect(result.error).toContain('only contain letters, numbers, hyphens');
+        expect(result.error).toContain(
+          'only contain letters, numbers, hyphens'
+        );
       });
 
       it('should reject project names with special characters', async () => {
@@ -113,9 +125,9 @@ describe('Deployment Tools', () => {
       it('should not allow PATH override in env vars', async () => {
         // This test verifies internal behavior - PATH injection is blocked
         const result = await deployToVercel(
-          { 
-            directory: '.', 
-            env: { PATH: '/malicious/path', VERCEL_TOKEN: 'injected' } 
+          {
+            directory: '.',
+            env: { PATH: '/malicious/path', VERCEL_TOKEN: 'injected' },
           },
           TEST_PROJECT,
           'real-token'
@@ -129,7 +141,7 @@ describe('Deployment Tools', () => {
         const result = await deployToVercel(
           { directory: '.' },
           TEST_PROJECT,
-          undefined  // No token
+          undefined // No token
         );
         expect(result.success).toBe(false);
         expect(result.error).toContain('VERCEL_TOKEN');
@@ -149,7 +161,7 @@ describe('Deployment Tools', () => {
 
       it('should accept valid project name', async () => {
         const validNames = ['my-project', 'project_123', 'MyApp', 'app-v2'];
-        
+
         for (const name of validNames) {
           const result = await deployToVercel(
             { directory: '.', projectName: name },
@@ -211,14 +223,14 @@ describe('Deployment Tools', () => {
 
       it('should validate bucket name format', async () => {
         const invalidBuckets = [
-          'A',           // Too short
-          'AB',          // Too short
-          'UPPERCASE',   // No uppercase
-          '-startdash',  // Can't start with dash
-          'enddash-',    // Can't end with dash
-          'has..dots',   // No consecutive dots
-          'has.-mixed',  // No dot-dash
-          'has-.mixed',  // No dash-dot
+          'A', // Too short
+          'AB', // Too short
+          'UPPERCASE', // No uppercase
+          '-startdash', // Can't start with dash
+          'enddash-', // Can't end with dash
+          'has..dots', // No consecutive dots
+          'has.-mixed', // No dot-dash
+          'has-.mixed', // No dash-dot
           'a'.repeat(64), // Too long
         ];
 
@@ -235,8 +247,8 @@ describe('Deployment Tools', () => {
       it('should validate region format', async () => {
         const invalidRegions = [
           'invalid',
-          'US-EAST-1',  // No uppercase
-          'us_east_1',  // No underscores
+          'US-EAST-1', // No uppercase
+          'us_east_1', // No underscores
           '12345',
         ];
 
@@ -252,10 +264,10 @@ describe('Deployment Tools', () => {
 
       it('should validate CloudFront distribution ID format', async () => {
         const result = await deployToS3(
-          { 
-            directory: '.', 
+          {
+            directory: '.',
             bucketName: 'valid-bucket',
-            cloudFrontDistributionId: 'invalid-chars!'
+            cloudFrontDistributionId: 'invalid-chars!',
           },
           TEST_PROJECT
         );
@@ -281,8 +293,10 @@ describe('Deployment Tools', () => {
         );
 
         // Restore
-        if (originalAccessKey) process.env.AWS_ACCESS_KEY_ID = originalAccessKey;
-        if (originalSecretKey) process.env.AWS_SECRET_ACCESS_KEY = originalSecretKey;
+        if (originalAccessKey)
+          process.env.AWS_ACCESS_KEY_ID = originalAccessKey;
+        if (originalSecretKey)
+          process.env.AWS_SECRET_ACCESS_KEY = originalSecretKey;
         if (originalProfile) process.env.AWS_PROFILE = originalProfile;
         if (originalRole) process.env.AWS_ROLE_ARN = originalRole;
 
@@ -323,7 +337,11 @@ describe('Deployment Tools', () => {
         process.env.AWS_SECRET_ACCESS_KEY = 'fake';
 
         const result = await deployToS3(
-          { directory: '.', bucketName: 'test-bucket', buildDir: 'nonexistent' },
+          {
+            directory: '.',
+            bucketName: 'test-bucket',
+            buildDir: 'nonexistent',
+          },
           TEST_PROJECT
         );
 
@@ -344,7 +362,9 @@ describe('Deployment Tools', () => {
     beforeEach(async () => {
       // Create terraform directory with a .tf file
       await fs.ensureDir(TEST_TF_DIR);
-      await fs.writeFile(path.join(TEST_TF_DIR, 'main.tf'), `
+      await fs.writeFile(
+        path.join(TEST_TF_DIR, 'main.tf'),
+        `
         terraform {
           required_providers {
             aws = {
@@ -360,7 +380,8 @@ describe('Deployment Tools', () => {
         variable "aws_region" {
           default = "us-east-1"
         }
-      `);
+      `
+      );
     });
 
     describe('Security', () => {
@@ -375,9 +396,9 @@ describe('Deployment Tools', () => {
 
       it('should validate variable names', async () => {
         const result = await terraformPlan(
-          { 
+          {
             directory: 'terraform',
-            vars: { '$(whoami)': 'value' }
+            vars: { '$(whoami)': 'value' },
           },
           TEST_PROJECT
         );
@@ -397,9 +418,9 @@ describe('Deployment Tools', () => {
 
         for (const value of maliciousValues) {
           const result = await terraformPlan(
-            { 
+            {
               directory: 'terraform',
-              vars: { safe_key: value }
+              vars: { safe_key: value },
             },
             TEST_PROJECT
           );
@@ -415,7 +436,9 @@ describe('Deployment Tools', () => {
         );
         expect(result.success).toBe(false);
         expect(result.requiresApproval).toBe(true);
-        expect(result.error).toContain('requires either a saved plan file or autoApprove=true');
+        expect(result.error).toContain(
+          'requires either a saved plan file or autoApprove=true'
+        );
       });
 
       it('should require explicit approval for terraform destroy', async () => {
@@ -430,9 +453,9 @@ describe('Deployment Tools', () => {
 
       it('should validate varFile is within terraform directory', async () => {
         const result = await terraformPlan(
-          { 
+          {
             directory: 'terraform',
-            varFile: '../../../etc/passwd'
+            varFile: '../../../etc/passwd',
           },
           TEST_PROJECT
         );
@@ -549,10 +572,10 @@ describe('Deployment Tools', () => {
         // Test that special characters are removed from project names
         // used in Terraform resource identifiers
         const result = await generateInfrastructure(
-          { 
-            directory: '.', 
+          {
+            directory: '.',
             provider: 'aws',
-            projectName: 'Test Project! @#$%'
+            projectName: 'Test Project! @#$%',
           },
           TEST_PROJECT
         );
@@ -608,8 +631,8 @@ describe('Deployment Tools', () => {
     describe('File Generation', () => {
       it('should generate Terraform files for AWS static site', async () => {
         const result = await generateInfrastructure(
-          { 
-            directory: '.', 
+          {
+            directory: '.',
             provider: 'aws',
             type: 'static',
             outputDir: 'terraform',
@@ -619,16 +642,18 @@ describe('Deployment Tools', () => {
 
         expect(result.success).toBe(true);
         expect(result.filesGenerated.length).toBeGreaterThan(0);
-        
+
         // Verify main.tf was created
-        const mainTfExists = await fs.pathExists(path.join(TEST_TF_DIR, 'main.tf'));
+        const mainTfExists = await fs.pathExists(
+          path.join(TEST_TF_DIR, 'main.tf')
+        );
         expect(mainTfExists).toBe(true);
       });
 
       it('should generate variables.tf with required inputs', async () => {
         await generateInfrastructure(
-          { 
-            directory: '.', 
+          {
+            directory: '.',
             provider: 'aws',
             type: 'static',
             outputDir: 'terraform',
@@ -636,18 +661,23 @@ describe('Deployment Tools', () => {
           TEST_PROJECT
         );
 
-        const variablesTfExists = await fs.pathExists(path.join(TEST_TF_DIR, 'variables.tf'));
+        const variablesTfExists = await fs.pathExists(
+          path.join(TEST_TF_DIR, 'variables.tf')
+        );
         expect(variablesTfExists).toBe(true);
 
-        const content = await fs.readFile(path.join(TEST_TF_DIR, 'variables.tf'), 'utf8');
+        const content = await fs.readFile(
+          path.join(TEST_TF_DIR, 'variables.tf'),
+          'utf8'
+        );
         // Should use variables for sensitive values, not hardcoded
         expect(content).toContain('variable');
       });
 
       it('should include usage instructions', async () => {
         const result = await generateInfrastructure(
-          { 
-            directory: '.', 
+          {
+            directory: '.',
             provider: 'aws',
             type: 'static',
           },
@@ -739,13 +769,13 @@ describe('Deployment Tools', () => {
 
     it('should sanitize project names consistently across all providers', async () => {
       const unsafeName = 'My Project! With @Special# Chars%';
-      
+
       for (const provider of ['aws', 'vercel', 'netlify'] as const) {
         const result = await generateInfrastructure(
           { directory: '.', provider, projectName: unsafeName },
           TEST_PROJECT
         );
-        
+
         // All providers should handle the name safely
         expect(result.error).not.toContain('injection');
         expect(result.error).not.toContain('invalid');
@@ -759,15 +789,24 @@ describe('Deployment Tools', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('Deployment Schema Validation', () => {
-  const { 
-    VercelDeploySchema, 
-    AWSS3DeploySchema,
-    TerraformInitSchema,
-    TerraformPlanSchema,
-    TerraformApplySchema,
-    TerraformDestroySchema,
-    GenerateInfrastructureSchema,
-  } = require('../../tools/schemas');
+  let VercelDeploySchema: typeof import('../../tools/schemas').VercelDeploySchema;
+  let AWSS3DeploySchema: typeof import('../../tools/schemas').AWSS3DeploySchema;
+  let TerraformInitSchema: typeof import('../../tools/schemas').TerraformInitSchema;
+  let TerraformPlanSchema: typeof import('../../tools/schemas').TerraformPlanSchema;
+  let TerraformApplySchema: typeof import('../../tools/schemas').TerraformApplySchema;
+  let TerraformDestroySchema: typeof import('../../tools/schemas').TerraformDestroySchema;
+  let GenerateInfrastructureSchema: typeof import('../../tools/schemas').GenerateInfrastructureSchema;
+
+  beforeAll(async () => {
+    const schemas = await import('../../tools/schemas');
+    VercelDeploySchema = schemas.VercelDeploySchema;
+    AWSS3DeploySchema = schemas.AWSS3DeploySchema;
+    TerraformInitSchema = schemas.TerraformInitSchema;
+    TerraformPlanSchema = schemas.TerraformPlanSchema;
+    TerraformApplySchema = schemas.TerraformApplySchema;
+    TerraformDestroySchema = schemas.TerraformDestroySchema;
+    GenerateInfrastructureSchema = schemas.GenerateInfrastructureSchema;
+  });
 
   describe('VercelDeploySchema', () => {
     it('should accept minimal valid input', () => {
@@ -783,7 +822,7 @@ describe('Deployment Schema Validation', () => {
 
     it('should validate env as record of strings', () => {
       const result = VercelDeploySchema.safeParse({
-        env: { NODE_ENV: 'production', API_URL: 'https://api.example.com' }
+        env: { NODE_ENV: 'production', API_URL: 'https://api.example.com' },
       });
       expect(result.success).toBe(true);
     });
@@ -846,14 +885,19 @@ describe('Deployment Schema Validation', () => {
       const valid = GenerateInfrastructureSchema.safeParse({ provider: 'aws' });
       expect(valid.success).toBe(true);
 
-      const invalid = GenerateInfrastructureSchema.safeParse({ provider: 'azure' });
+      const invalid = GenerateInfrastructureSchema.safeParse({
+        provider: 'azure',
+      });
       expect(invalid.success).toBe(false);
     });
 
     it('should validate type enum', () => {
       const validTypes = ['static', 'serverless', 'container', 'fullstack'];
       for (const type of validTypes) {
-        const result = GenerateInfrastructureSchema.safeParse({ provider: 'aws', type });
+        const result = GenerateInfrastructureSchema.safeParse({
+          provider: 'aws',
+          type,
+        });
         expect(result.success).toBe(true);
       }
     });
@@ -867,7 +911,7 @@ describe('Deployment Schema Validation', () => {
           enableWaf: false,
           memory: 512,
           timeout: 30,
-        }
+        },
       });
       expect(result.success).toBe(true);
     });
