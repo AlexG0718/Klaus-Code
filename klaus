@@ -1,0 +1,231 @@
+#!/usr/bin/env node
+
+/**
+ * Klaus CLI Client
+ * 
+ * Sends prompts to a running Klaus-Code server and streams the response.
+ * Use this from your local terminal (VSCode, iTerm, etc.) while the 
+ * agent runs in Docker.
+ * 
+ * Usage:
+ *   ./klaus "run tests for backend"
+ *   ./klaus "lint src folder"
+ *   ./klaus --url http://localhost:3001 "your prompt"
+ */
+
+const http = require('http');
+const https = require('https');
+
+// ─── Configuration ───────────────────────────────────────────────────────────
+const DEFAULT_URL = process.env.KLAUS_URL || 'http://localhost:3001';
+const API_SECRET = process.env.KLAUS_API_SECRET || '';
+
+// ─── Parse arguments ─────────────────────────────────────────────────────────
+const args = process.argv.slice(2);
+let serverUrl = DEFAULT_URL;
+let prompt = '';
+let sessionId = process.env.KLAUS_SESSION || '';
+let model = '';
+
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--url' && args[i + 1]) {
+    serverUrl = args[++i];
+  } else if (args[i] === '--session' && args[i + 1]) {
+    sessionId = args[++i];
+  } else if (args[i] === '--model' && args[i + 1]) {
+    model = args[++i];
+  } else if (args[i] === '--help' || args[i] === '-h') {
+    console.log(`
+Klaus CLI Client - Send prompts to a running Klaus-Code server
+
+Usage:
+  ./klaus "your prompt here"
+  ./klaus --model haiku "simple task"
+  ./klaus --session abc123 "continue working"
+
+Options:
+  --url <url>       Server URL (default: http://localhost:3001 or KLAUS_URL env)
+  --session <id>    Resume an existing session
+  --model <name>    Model to use: opus, sonnet, haiku (default: server's default)
+  --help            Show this help
+
+Environment variables:
+  KLAUS_URL         Default server URL
+  KLAUS_API_SECRET  API secret for authentication
+  KLAUS_SESSION     Default session ID to resume
+
+Examples:
+  ./klaus "run tests"
+  ./klaus "lint src/ and fix errors"
+  ./klaus --model haiku "format all files"
+  ./klaus --session abc123 "now add error handling"
+`);
+    process.exit(0);
+  } else if (!args[i].startsWith('--')) {
+    prompt = args[i];
+  }
+}
+
+if (!prompt) {
+  console.error('Error: No prompt provided');
+  console.error('Usage: ./klaus "your prompt here"');
+  console.error('       ./klaus --help for more options');
+  process.exit(1);
+}
+
+// ─── Expand model shortcuts ──────────────────────────────────────────────────
+const MODEL_MAP = {
+  'opus': 'claude-opus-4-5',
+  'sonnet': 'claude-sonnet-4-5',
+  'haiku': 'claude-haiku-4-5',
+};
+if (model && MODEL_MAP[model.toLowerCase()]) {
+  model = MODEL_MAP[model.toLowerCase()];
+}
+
+// ─── ANSI colors ─────────────────────────────────────────────────────────────
+const c = {
+  reset: '\x1b[0m',
+  dim: '\x1b[2m',
+  bold: '\x1b[1m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  cyan: '\x1b[36m',
+  red: '\x1b[31m',
+};
+
+// ─── Make the request ────────────────────────────────────────────────────────
+const url = new URL('/api/prompt', serverUrl);
+const isHttps = url.protocol === 'https:';
+const client = isHttps ? https : http;
+
+const body = JSON.stringify({
+  message: prompt,
+  sessionId: sessionId || undefined,
+  model: model || undefined,
+});
+
+const options = {
+  hostname: url.hostname,
+  port: url.port || (isHttps ? 443 : 80),
+  path: url.pathname,
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body),
+    ...(API_SECRET ? { 'Authorization': `Bearer ${API_SECRET}` } : {}),
+  },
+};
+
+console.log(`${c.dim}Sending to ${serverUrl}...${c.reset}\n`);
+
+const req = client.request(options, (res) => {
+  if (res.statusCode !== 200) {
+    console.error(`${c.red}Error: Server returned ${res.statusCode}${c.reset}`);
+    let data = '';
+    res.on('data', chunk => data += chunk);
+    res.on('end', () => {
+      try {
+        const err = JSON.parse(data);
+        console.error(err.error || data);
+      } catch {
+        console.error(data);
+      }
+      process.exit(1);
+    });
+    return;
+  }
+
+  // Process Server-Sent Events stream
+  let buffer = '';
+  let currentSessionId = sessionId;
+  let assistantText = '';
+  let toolsRan = [];
+
+  res.on('data', (chunk) => {
+    buffer += chunk.toString();
+    
+    // Process complete events
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+    
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      
+      try {
+        const event = JSON.parse(line.slice(6));
+        
+        switch (event.type) {
+          case 'thinking':
+            process.stdout.write(`${c.dim}Thinking...${c.reset}\r`);
+            break;
+            
+          case 'stream_delta':
+            process.stdout.write(event.data?.delta || '');
+            assistantText += event.data?.delta || '';
+            break;
+            
+          case 'tool_call':
+            const toolName = event.data?.name || 'unknown';
+            const toolInput = event.data?.input || {};
+            toolsRan.push(toolName);
+            console.log(`\n${c.cyan}▶ ${toolName}${c.reset} ${c.dim}${JSON.stringify(toolInput).slice(0, 100)}${c.reset}`);
+            break;
+            
+          case 'tool_result':
+            const success = event.data?.success !== false;
+            const icon = success ? `${c.green}✓${c.reset}` : `${c.red}✗${c.reset}`;
+            const duration = event.data?.durationMs ? ` ${c.dim}(${event.data.durationMs}ms)${c.reset}` : '';
+            console.log(`${icon}${duration}`);
+            break;
+            
+          case 'tool_progress':
+            const progress = event.data?.progress || 0;
+            const status = event.data?.status || '';
+            process.stdout.write(`\r${c.dim}  ${progress}% ${status}${c.reset}`.padEnd(60));
+            break;
+            
+          case 'error':
+            console.error(`\n${c.red}Error: ${event.data?.error}${c.reset}`);
+            break;
+            
+          case 'turn_complete':
+            const tokens = event.data;
+            if (tokens) {
+              console.log(`\n${c.dim}Turn ${tokens.turn}: ${tokens.inputTokens}↓ ${tokens.outputTokens}↑ ($${tokens.estimatedCostThisTurn?.toFixed(4) || '?'})${c.reset}`);
+            }
+            break;
+            
+          case 'complete':
+            currentSessionId = event.data?.sessionId || currentSessionId;
+            const totalTokens = event.data?.tokenUsage;
+            console.log(`\n${c.dim}─────────────────────────────────────────${c.reset}`);
+            if (totalTokens) {
+              console.log(`${c.dim}Total: ${totalTokens.totalTokens?.toLocaleString() || '?'} tokens ($${totalTokens.estimatedCostUsd || '?'})${c.reset}`);
+            }
+            if (currentSessionId) {
+              console.log(`${c.dim}Session: ${currentSessionId}${c.reset}`);
+              console.log(`${c.dim}Resume with: ./klaus --session ${currentSessionId} "your next prompt"${c.reset}`);
+            }
+            break;
+        }
+      } catch (e) {
+        // Ignore parse errors for incomplete chunks
+      }
+    }
+  });
+
+  res.on('end', () => {
+    console.log('');
+  });
+});
+
+req.on('error', (err) => {
+  console.error(`${c.red}Connection error: ${err.message}${c.reset}`);
+  console.error(`${c.dim}Is the Klaus-Code server running at ${serverUrl}?${c.reset}`);
+  process.exit(1);
+});
+
+req.write(body);
+req.end();

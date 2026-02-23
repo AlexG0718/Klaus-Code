@@ -1,0 +1,34 @@
+FROM node:20-alpine AS base
+WORKDIR /app
+
+# ── Dependencies ────────────────────────────────────────────────
+FROM base AS deps
+COPY package.json ./
+COPY packages/ui/package.json ./packages/ui/
+RUN npm install --workspace=packages/ui
+
+# ── Build ───────────────────────────────────────────────────────
+FROM deps AS builder
+
+# Vite bakes VITE_* env vars at build time. Accept them as build args so the
+# image can target a non-localhost agent backend (e.g. behind a reverse proxy).
+ARG VITE_AGENT_URL=http://localhost:3001
+ARG VITE_API_SECRET=
+ENV VITE_AGENT_URL=$VITE_AGENT_URL
+ENV VITE_API_SECRET=$VITE_API_SECRET
+
+COPY packages/ui ./packages/ui
+RUN npm run build -w packages/ui
+
+# ── Runtime — serve with a lightweight static server ────────────
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+RUN npm install -g serve@14
+
+COPY --from=builder /app/packages/ui/dist ./dist
+
+USER node
+EXPOSE 5173
+
+CMD ["serve", "-s", "dist", "-l", "5173"]

@@ -1,0 +1,30 @@
+# .agentignore — files the agent can never read, write, or delete
+# Syntax: one pattern per line, gitignore-style
+# Place this file in your workspace root
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+# Credentials and tokens
+.aws/
+.ssh/
+.netrc
+secrets/
+credentials/
+
+# Build artifacts (agent should not modify these directly)
+dist/
+build/
+.next/
+out/
+
+# Agent's own data
+.ai-agent/

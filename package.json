@@ -1,0 +1,33 @@
+{
+  "name": "klaus-code",
+  "version": "4.0.0",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w packages/agent\" \"npm run dev -w packages/ui\"",
+    "serve": "docker compose up --build",
+    "serve:detach": "docker compose up --build -d",
+    "stop": "docker compose down",
+    "build": "npm run build -w packages/agent && npm run build -w packages/ui",
+    "test": "npm run test -w packages/agent",
+    "test:e2e": "npm run test:e2e -w packages/agent",
+    "lint": "eslint packages --ext .ts,.tsx",
+    "deploy": "npm run deploy -w packages/agent",
+    "db:stats": "ts-node packages/agent/src/index.ts db stats",
+    "db:changes": "ts-node packages/agent/src/index.ts db changes",
+    "db:git-log": "ts-node packages/agent/src/index.ts db git-log",
+    "db:clear-sessions": "ts-node packages/agent/src/index.ts db clear-sessions",
+    "db:clear-knowledge": "ts-node packages/agent/src/index.ts db clear-knowledge",
+    "db:clear-all": "ts-node packages/agent/src/index.ts db clear-all"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "concurrently": "^8.2.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.0"
+  }
+}

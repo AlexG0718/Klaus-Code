@@ -1,0 +1,159 @@
+# ─── Named volumes ────────────────────────────────────────────────────────────
+# Agent DB and logs live in Docker-managed volumes, not host bind mounts.
+# This means they are NOT accessible from your host filesystem, which is safer.
+# To inspect logs: docker compose exec agent cat /data/logs/agent-$(date +%Y-%m-%d).log
+# To back up DB:   docker compose cp agent:/data/memory.db ./backup.db
+volumes:
+  agent-data:   # Persistent memory DB + logs
+  ui-build:     # Shared build output between ui and agent (for deploy)
+
+services:
+
+  # ── Docker Socket Proxy ─────────────────────────────────────────────────────
+  # Provides filtered access to the Docker daemon for the agent.
+  # Only allows specific API calls (container operations), blocking dangerous ones
+  # like volume mounts to host paths, privileged containers, etc.
+  # This is the recommended production approach for DooD (Docker-outside-of-Docker).
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    environment:
+      # Core permissions for sandbox container lifecycle
+      - CONTAINERS=1        # List/inspect containers
+      - IMAGES=1            # Pull images (for node:20-alpine sandbox)
+      - POST=1              # Allow POST requests (create, start, stop)
+      - ALLOW_START=1       # Start containers
+      - ALLOW_STOP=1        # Stop containers  
+      - ALLOW_KILL=1        # Kill containers (for timeouts)
+      - ALLOW_WAIT=1        # Wait for container exit (get exit code)
+      - ALLOW_ATTACH=1      # Attach to container streams (get stdout/stderr)
+      # Explicitly disabled (dangerous operations)
+      - AUTH=0              # No auth config access
+      - SECRETS=0           # No secrets access
+      - SERVICES=0          # No swarm services
+      - TASKS=0             # No swarm tasks
+      - NODES=0             # No swarm nodes
+      - NETWORKS=0          # No network creation (sandbox uses none)
+      - VOLUMES=0           # No volume creation
+      - BUILD=0             # No image building
+      - COMMIT=0            # No container commits
+      - CONFIGS=0           # No config access
+      - DISTRIBUTION=0      # No distribution API
+      - EXEC=0              # No exec into containers
+      - GRPC=0              # No gRPC
+      - INFO=1              # Allow info (needed for connection test)
+      - PING=1              # Allow ping (health checks)
+      - PLUGINS=0           # No plugins
+      - SESSION=0           # No sessions
+      - SWARM=0             # No swarm
+      - SYSTEM=0            # No system-level operations
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-proxy-net
+    restart: unless-stopped
+    # The proxy runs privileged to access the socket, but the agent does NOT
+    privileged: true
+    # Health check to ensure proxy is ready
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:2375/_ping"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+  # ── Agent backend ────────────────────────────────────────────────────────────
+  agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    ports:
+      - "${PORT:-3001}:3001"
+    volumes:
+      # Workspace: the ONLY host directory the agent can see
+      - type: bind
+        source: ${AGENT_WORKSPACE:?AGENT_WORKSPACE must be set in .env}
+        target: /workspace
+        read_only: false
+      # Agent data (DB + logs) in an isolated named volume — not on your host
+      - agent-data:/data
+      # NOTE: No direct Docker socket mount! Agent connects via docker-proxy.
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY must be set}
+      # Container path for file operations
+      - AGENT_WORKSPACE=/workspace
+      # Host path for Docker sandbox bind mounts (DooD requires host paths!)
+      - AGENT_HOST_WORKSPACE=${AGENT_WORKSPACE}
+      - AGENT_DB_PATH=/data/memory.db
+      - AGENT_LOG_DIR=/data/logs
+      - AGENT_MODEL=${AGENT_MODEL:-claude-sonnet-4-5}
+      - AGENT_MAX_TOKENS=${AGENT_MAX_TOKENS:-8192}
+      - AGENT_MAX_RETRIES=${AGENT_MAX_RETRIES:-3}
+      - AGENT_TOKEN_BUDGET=${AGENT_TOKEN_BUDGET:-100000}
+      - AGENT_MAX_TOOL_CALLS=${AGENT_MAX_TOOL_CALLS:-50}
+      - AGENT_MAX_CONCURRENT_SESSIONS=${AGENT_MAX_CONCURRENT_SESSIONS:-3}
+      - AGENT_CORS_ORIGIN=${AGENT_CORS_ORIGIN:-http://localhost:5173}
+      - AGENT_MAX_PROMPT_CHARS=${AGENT_MAX_PROMPT_CHARS:-32000}
+      - AGENT_API_SECRET=${AGENT_API_SECRET:-}
+      # Docker sandbox enabled — connects via socket proxy for security
+      - DOCKER_ENABLED=true
+      # Connect to Docker via the socket proxy instead of direct socket
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      - NETLIFY_AUTH_TOKEN=${NETLIFY_AUTH_TOKEN:-}
+      - NETLIFY_SITE_ID=${NETLIFY_SITE_ID:-}
+      - VERCEL_TOKEN=${VERCEL_TOKEN:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - PORT=3001
+      # Git credentials for push/pull operations (optional)
+      # Format: https://username:token@github.com
+      - GIT_CREDENTIALS=${GIT_CREDENTIALS:-}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
+      - GIT_USER_NAME=${GIT_USER_NAME:-}
+    # Run as non-root user (no socket access needed now!)
+    user: "node"
+    # Security hardening: prevent privilege escalation via setuid/setgid binaries
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - agent-internal     # Can reach ui
+      - docker-proxy-net   # Can reach docker-proxy only
+    depends_on:
+      docker-proxy:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  # ── React UI ─────────────────────────────────────────────────────────────────
+  ui:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ui
+      args:
+        VITE_AGENT_URL: ${VITE_AGENT_URL:-http://localhost:3001}
+        VITE_API_SECRET: ${AGENT_API_SECRET:-}
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_AGENT_URL=http://localhost:3001
+    depends_on:
+      agent:
+        condition: service_healthy
+    networks:
+      - agent-internal
+    # Security hardening: prevent privilege escalation
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+networks:
+  agent-internal:
+    driver: bridge
+    internal: false   # Allows outbound for API calls
+  docker-proxy-net:
+    driver: bridge
+    internal: true    # Isolated network — only agent and proxy can communicate
+
