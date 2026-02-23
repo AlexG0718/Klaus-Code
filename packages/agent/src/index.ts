@@ -36,6 +36,10 @@ interface GitLogOptions {
   workspace: string;
 }
 
+interface PromptOptions {
+  workspace: string;
+}
+
 async function main(): Promise<void> {
   const config = loadConfig();
 
@@ -154,7 +158,7 @@ async function main(): Promise<void> {
     .command('prompt <message>')
     .description('Send a single prompt to the agent (CLI mode)')
     .option('--workspace <path>', 'Workspace directory', process.cwd())
-    .action(async (message: string, opts) => {
+    .action(async (message: string, opts: PromptOptions) => {
       if (!(await fs.pathExists(opts.workspace))) {
         logger.error(`Workspace does not exist: ${opts.workspace}`);
         process.exit(1);

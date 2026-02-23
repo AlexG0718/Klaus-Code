@@ -106,7 +106,7 @@ export function useAgentSocket(): UseAgentSocketReturn {
         try {
           h(event);
         } catch {
-          /* prevent handler errors from breaking others */
+          /* handler error, continue */
         }
       });
       if (event.type === 'complete' || event.type === 'error') {
