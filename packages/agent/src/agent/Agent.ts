@@ -84,7 +84,7 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
     name: 'DB Connection String',
     pattern: /(postgres|mysql|mongodb):\/\/[^@]+:[^@]+@/,
   },
-  { name: 'Bearer Token', pattern: /bearer\s+[a-zA-Z0-9\-_.]{20,}/i },
+  { name: 'Bearer Token', pattern: /bearer\s+[a-zA-Z0-9_.-]{20,}/i },
 ];
 
 const SYSTEM_PROMPT = `
