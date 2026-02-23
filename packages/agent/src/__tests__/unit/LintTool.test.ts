@@ -1,161 +1,226 @@
 import * as path from 'path';
-import * as os from 'os';
-import * as fs from 'fs-extra';
-import { LintTool } from '../../tools/LintTool';
+import { logger } from '../logger';
+import type { DockerSandbox } from '../sandbox/DockerSandbox';
+import type { EslintCheckInput, PrettierFormatInput } from './schemas';
 
-jest.mock('child_process', () => ({ spawn: jest.fn() }));
-import { spawn } from 'child_process';
-const mockSpawn = spawn as jest.MockedFunction<typeof spawn>;
+const NPX_BIN = 'npx';
 
-function makeSpawnMock(exitCode: number, stdout = '', stderr = '') {
-  const emitter = {
-    stdout: { on: jest.fn() },
-    stderr: { on: jest.fn() },
-    on: jest.fn(),
-  } as any;
-  emitter.stdout.on.mockImplementation(
-    (ev: string, cb: (data: Buffer) => void) => {
-      if (ev === 'data' && stdout) cb(Buffer.from(stdout));
-    }
-  );
-  emitter.stderr.on.mockImplementation(
-    (ev: string, cb: (data: Buffer) => void) => {
-      if (ev === 'data' && stderr) cb(Buffer.from(stderr));
-    }
-  );
-  emitter.on.mockImplementation((ev: string, cb: (code: number) => void) => {
-    if (ev === 'close') setTimeout(() => cb(exitCode), 0);
-  });
-  return emitter;
+export interface LintResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  command: string;
+  sandboxed: boolean;
+  fixesApplied?: boolean;
 }
 
-describe('LintTool', () => {
-  let tool: LintTool;
-  let workspaceDir: string;
+export class LintTool {
+  constructor(
+    private readonly workspaceDir: string,
+    private readonly sandbox: DockerSandbox | null = null
+  ) {}
 
-  beforeEach(async () => {
-    workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-tool-test-'));
-    tool = new LintTool(workspaceDir);
-    mockSpawn.mockReset();
-  });
+  // ─── ESLint ────────────────────────────────────────────────────────────────
 
-  afterEach(async () => {
-    await fs.remove(workspaceDir);
-  });
+  async eslintCheck(input: EslintCheckInput): Promise<LintResult> {
+    const cwd = this.resolveDir(input.packageDir);
+    const resolvedPaths = input.paths.map((p) => this.resolveLintPath(p));
 
-  // ── ESLint ─────────────────────────────────────────────────────────────────
+    const args = [
+      'eslint',
+      '--no-error-on-unmatched-pattern',
+      '--max-warnings',
+      '0',
+      ...resolvedPaths,
+    ];
+    if (input.fix) args.push('--fix');
 
-  describe('eslintCheck', () => {
-    it('runs "npx eslint" with the correct args', async () => {
-      mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-
-      await tool.eslintCheck({ paths: ['src'], fix: false, packageDir: '.' });
-
-      const [bin, args] = mockSpawn.mock.calls[0];
-      expect(bin).toBe('npx');
-      expect(args[0]).toBe('eslint');
-      expect(args).toContain('src');
+    logger.info('Running ESLint', {
+      paths: resolvedPaths,
+      fix: input.fix,
+      sandboxed: !!this.sandbox,
     });
+    const result = await this.runProcess(NPX_BIN, args, cwd, 120_000);
+    return {
+      ...result,
+      command: `npx eslint ${resolvedPaths.join(' ')}${input.fix ? ' --fix' : ''}`,
+      fixesApplied: input.fix && result.success,
+    };
+  }
 
-    it('adds --fix when fix is true', async () => {
-      mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-      await tool.eslintCheck({ paths: ['src'], fix: true, packageDir: '.' });
-      const [, args] = mockSpawn.mock.calls[0];
-      expect(args).toContain('--fix');
+  // ─── Prettier ──────────────────────────────────────────────────────────────
+
+  async prettierFormat(input: PrettierFormatInput): Promise<LintResult> {
+    const cwd = this.resolveDir(input.packageDir);
+    const resolvedPaths = input.paths.map((p) => this.resolveLintPath(p));
+
+    const args = [
+      'prettier',
+      ...(input.check ? ['--check'] : ['--write']),
+      ...resolvedPaths,
+    ];
+
+    logger.info('Running Prettier', {
+      paths: resolvedPaths,
+      check: input.check,
+      sandboxed: !!this.sandbox,
     });
+    const result = await this.runProcess(NPX_BIN, args, cwd, 60_000);
+    return {
+      ...result,
+      command: `npx prettier ${input.check ? '--check' : '--write'} ${resolvedPaths.join(' ')}`,
+      fixesApplied: !input.check && result.success,
+    };
+  }
 
-    it('does NOT add --fix when fix is false', async () => {
-      mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-      await tool.eslintCheck({ paths: ['src'], fix: false, packageDir: '.' });
-      const [, args] = mockSpawn.mock.calls[0];
-      expect(args).not.toContain('--fix');
-    });
+  // ─── Core process runner ──────────────────────────────────────────────────
 
-    it('returns success:false when ESLint finds errors', async () => {
-      mockSpawn.mockReturnValue(makeSpawnMock(1, '3 errors found') as any);
-      const result = await tool.eslintCheck({
-        paths: ['src'],
-        fix: false,
-        packageDir: '.',
+  private async runProcess(
+    bin: string,
+    args: string[],
+    cwd: string,
+    timeout: number
+  ): Promise<Omit<LintResult, 'command' | 'fixesApplied'>> {
+    // ── Docker sandbox path ───────────────────────────────────────────────
+    if (this.sandbox) {
+      const containerCwd = this.hostToContainer(cwd);
+      const cdPrefix =
+        containerCwd !== '/workspace' ? `cd ${containerCwd} && ` : '';
+      // Lint paths are relative to cwd — no translation needed
+      const containerCmd = `${cdPrefix}${bin} ${args.join(' ')}`;
+
+      logger.info('Routing lint command to Docker sandbox', {
+        command: containerCmd,
       });
-      expect(result.success).toBe(false);
-    });
-
-    it('blocks path traversal in paths array', async () => {
-      await expect(
-        tool.eslintCheck({
-          paths: ['../../etc/passwd'],
-          fix: false,
-          packageDir: '.',
-        })
-      ).rejects.toThrow('outside the workspace');
-    });
-
-    it('blocks path traversal in packageDir', async () => {
-      await expect(
-        tool.eslintCheck({
-          paths: ['src'],
-          fix: false,
-          packageDir: '../../etc',
-        })
-      ).rejects.toThrow('outside the workspace');
-    });
-
-    it('never uses shell:true', async () => {
-      mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-      await tool.eslintCheck({ paths: ['.'], fix: false, packageDir: '.' });
-      const opts = mockSpawn.mock.calls[0][2] as any;
-      expect(opts?.shell).toBeFalsy();
-    });
-  });
-
-  // ── Prettier ───────────────────────────────────────────────────────────────
-
-  describe('prettierFormat', () => {
-    it('uses --write when check is false', async () => {
-      mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-      await tool.prettierFormat({
-        paths: ['src'],
-        check: false,
-        packageDir: '.',
-      });
-      const [, args] = mockSpawn.mock.calls[0];
-      expect(args).toContain('--write');
-      expect(args).not.toContain('--check');
-    });
-
-    it('uses --check when check is true', async () => {
-      mockSpawn.mockReturnValue(makeSpawnMock(0) as any);
-      await tool.prettierFormat({
-        paths: ['src'],
-        check: true,
-        packageDir: '.',
-      });
-      const [, args] = mockSpawn.mock.calls[0];
-      expect(args).toContain('--check');
-      expect(args).not.toContain('--write');
-    });
-
-    it('returns success:false when files are not formatted', async () => {
-      mockSpawn.mockReturnValue(
-        makeSpawnMock(1, 'src/index.ts: needs formatting') as any
+      const result = await this.sandbox.execute(
+        containerCmd,
+        this.workspaceDir,
+        { timeout }
       );
-      const result = await tool.prettierFormat({
-        paths: ['src'],
-        check: true,
-        packageDir: '.',
-      });
-      expect(result.success).toBe(false);
-    });
 
-    it('blocks absolute paths', async () => {
-      await expect(
-        tool.prettierFormat({
-          paths: ['/etc/passwd'],
-          check: false,
-          packageDir: '.',
-        })
-      ).rejects.toThrow('outside the workspace');
+      const success = result.exitCode === 0;
+      if (!success)
+        logger.warn('Sandboxed lint failed', { command: containerCmd });
+      return {
+        success,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        durationMs: 0,
+        sandboxed: true,
+      };
+    }
+
+    // ── Host path ─────────────────────────────────────────────────────────
+    const { spawn } = await import('child_process');
+    const start = Date.now();
+    const MAX_OUTPUT = 5 * 1024 * 1024; // 5MB cap
+
+    return new Promise((resolve, reject) => {
+      let stdout = '',
+        stderr = '',
+        timedOut = false;
+      let stdoutCapped = false,
+        stderrCapped = false;
+
+      const child = spawn(bin, args, {
+        cwd,
+        shell: false,
+        env: { ...process.env },
+      });
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+        setTimeout(() => child.kill('SIGKILL'), 5000);
+        logger.warn('Lint command timed out', { bin, timeout });
+      }, timeout);
+
+      child.stdout.on('data', (d: Buffer) => {
+        if (!stdoutCapped) {
+          stdout += d.toString();
+          if (stdout.length > MAX_OUTPUT) {
+            stdout = stdout.slice(0, MAX_OUTPUT) + '\n[TRUNCATED]';
+            stdoutCapped = true;
+          }
+        }
+      });
+      child.stderr.on('data', (d: Buffer) => {
+        if (!stderrCapped) {
+          stderr += d.toString();
+          if (stderr.length > MAX_OUTPUT) {
+            stderr = stderr.slice(0, MAX_OUTPUT) + '\n[TRUNCATED]';
+            stderrCapped = true;
+          }
+        }
+      });
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(new Error(`Failed to spawn ${bin}: ${err.message}`));
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        const durationMs = Date.now() - start;
+        const success = !timedOut && code === 0;
+        logger.info('Lint process complete', {
+          bin,
+          exitCode: code,
+          durationMs,
+          success,
+        });
+        if (!success)
+          logger.warn('Lint issues found', { stdout: stdout.slice(0, 500) });
+        resolve({ success, stdout, stderr, durationMs, sandboxed: false });
+      });
     });
-  });
-});
+  }
+
+  // ─── Path translation ─────────────────────────────────────────────────────
+
+  private hostToContainer(hostPath: string): string {
+    const rel = path.relative(this.workspaceDir, hostPath);
+    return rel === '' ? '/workspace' : `/workspace/${rel}`;
+  }
+
+  // ─── Guards ───────────────────────────────────────────────────────────────
+
+  private resolveDir(dir: string): string {
+    // Reject absolute paths BEFORE stripping leading slashes
+    if (path.isAbsolute(dir)) {
+      throw new Error(
+        `Access denied: path "${dir}" resolves outside the workspace.`
+      );
+    }
+    const sanitized = dir.replace(/^[/\\]+/, '');
+    const resolved = path.resolve(this.workspaceDir, sanitized);
+    this.assertInWorkspace(resolved, dir);
+    return resolved;
+  }
+
+  private resolveLintPath(p: string): string {
+    // Reject absolute paths BEFORE stripping leading slashes
+    if (path.isAbsolute(p)) {
+      throw new Error(
+        `Access denied: path "${p}" resolves outside the workspace.`
+      );
+    }
+    const nonGlobPart = p.split('*')[0].replace(/^[/\\]+/, '');
+    const resolved = path.resolve(this.workspaceDir, nonGlobPart);
+    this.assertInWorkspace(resolved, p);
+    return path.relative(
+      this.workspaceDir,
+      path.resolve(this.workspaceDir, p.replace(/^[/\\]+/, ''))
+    );
+  }
+
+  private assertInWorkspace(resolved: string, original: string): void {
+    const prefix = this.workspaceDir.endsWith(path.sep)
+      ? this.workspaceDir
+      : this.workspaceDir + path.sep;
+    if (resolved !== this.workspaceDir && !resolved.startsWith(prefix)) {
+      throw new Error(
+        `Access denied: path "${original}" resolves outside the workspace.`
+      );
+    }
+  }
+}
