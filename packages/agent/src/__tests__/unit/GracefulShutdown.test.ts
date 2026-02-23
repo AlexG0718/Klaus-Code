@@ -10,23 +10,53 @@
  */
 
 import { AgentServer } from '../../server/AgentServer';
-import { Agent }       from '../../agent/Agent';
+import { Agent } from '../../agent/Agent';
 import { DatabaseMemory } from '../../memory/DatabaseMemory';
 import type { Config } from '../../config';
 
 jest.mock('../../agent/Agent');
 jest.mock('../../memory/DatabaseMemory');
 
-const MockAgent  = Agent  as jest.MockedClass<typeof Agent>;
+const MockAgent = Agent as jest.MockedClass<typeof Agent>;
 const MockMemory = DatabaseMemory as jest.MockedClass<typeof DatabaseMemory>;
 
 function makeConfig(): Config {
   return {
-    apiKey: 'key', workspaceDir: '/tmp', dbPath: ':memory:', logDir: '/tmp',
-    model: 'claude-opus-4-5', maxTokens: 1024, maxRetries: 1,
-    maxContextMessages: 10, tokenBudget: 100_000, maxToolCalls: 50,
-    maxConcurrentSessions: 3, corsOrigin: 'http://localhost:5173',
-    maxPromptChars: 32_000, dockerEnabled: false, port: 3098,
+    apiKey: 'test-key',
+    workspaceDir: '/tmp',
+    hostWorkspaceDir: '/tmp',
+    dbPath: ':memory:',
+    logDir: '/tmp',
+    model: 'claude-opus-4-5',
+    maxTokens: 1024,
+    maxRetries: 1,
+    apiSecret: undefined,
+    maxContextMessages: 10,
+    tokenBudget: 100_000,
+    maxToolCalls: 50,
+    maxConcurrentSessions: 3,
+    corsOrigin: 'http://localhost:5173',
+    maxPromptChars: 32_000,
+    trustProxy: false,
+    maxSearchResults: 500,
+    wsRateLimit: 30,
+    shutdownTimeout: 30_000,
+    webhookUrl: undefined,
+    maxToolResultSize: 10_240,
+    metricsEnabled: true,
+    sessionTtl: 86_400_000,
+    sessionCleanupInterval: 300_000,
+    requirePatchApproval: false,
+    apiRetryCount: 3,
+    apiRetryDelay: 1000,
+    apiRetryMaxDelay: 30_000,
+    maxToolOutputContext: 8_000,
+    debugMode: false,
+    netlifyToken: undefined,
+    netlifySiteId: undefined,
+    vercelToken: undefined,
+    dockerEnabled: false,
+    port: 3098,
   };
 }
 
@@ -34,10 +64,14 @@ describe('AgentServer.stop()', () => {
   it('resolves without error', async () => {
     const config = makeConfig();
     const memory = new MockMemory(':memory:') as jest.Mocked<DatabaseMemory>;
-    (memory.getTotalTokenUsage as jest.Mock) = jest.fn().mockReturnValue({ totalTokens: 0, estimatedCostUsd: 0 });
+    (memory.getTotalTokenUsage as jest.Mock) = jest
+      .fn()
+      .mockReturnValue({ totalTokens: 0, estimatedCostUsd: 0 });
 
     const agent = new MockAgent(config, memory);
-    Object.defineProperty(agent, 'activeSessionCount', { get: jest.fn().mockReturnValue(0) });
+    Object.defineProperty(agent, 'activeSessionCount', {
+      get: jest.fn().mockReturnValue(0),
+    });
 
     const server = new AgentServer(agent, memory, config, config.port);
 
@@ -65,7 +99,9 @@ describe('Agent.cancel()', () => {
 describe('DatabaseMemory.close()', () => {
   it('close() method exists and is callable', () => {
     jest.unmock('../../memory/DatabaseMemory');
-    const { DatabaseMemory: RealMemory } = jest.requireActual('../../memory/DatabaseMemory');
+    const { DatabaseMemory: RealMemory } = jest.requireActual(
+      '../../memory/DatabaseMemory'
+    );
 
     // We can't open a real SQLite DB here, but we can verify the method exists
     expect(typeof RealMemory.prototype.close).toBe('function');
