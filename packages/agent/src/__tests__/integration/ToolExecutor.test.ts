@@ -17,16 +17,39 @@ describe('ToolExecutor - Integration Tests', () => {
     workspaceDir: '',
     dbPath: '',
     logDir: os.tmpdir(),
-    model: 'claude-opus-4-5',
+    model: 'claude-sonnet-4-20250514',
     maxTokens: 8192,
     maxRetries: 3,
+    maxContextMessages: 30,
     dockerEnabled: false,
-    allowedCommands: ['echo', 'ls', 'sh', 'node', 'npm', 'npx', 'cat', 'mkdir'],
     port: 3001,
+    // Required Config properties
+    hostWorkspaceDir: '/tmp/test-workspace',
+    trustProxy: false,
+    maxPromptChars: 100_000,
+    maxConcurrentSessions: 5,
+    tokenBudget: 100_000,
+    maxToolCalls: 50,
+    corsOrigin: '*',
+    maxSearchResults: 500,
+    wsRateLimit: 30,
+    shutdownTimeout: 30_000,
+    maxToolResultSize: 10_240,
+    metricsEnabled: false,
+    sessionTtl: 86_400_000,
+    sessionCleanupInterval: 300_000,
+    requirePatchApproval: false,
+    apiRetryCount: 3,
+    apiRetryDelay: 1000,
+    apiRetryMaxDelay: 30_000,
+    maxToolOutputContext: 8_000,
+    debugMode: false,
   };
 
   beforeEach(async () => {
-    workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-executor-test-'));
+    workspace = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'agent-executor-test-')
+    );
     dbPath = path.join(os.tmpdir(), `executor-test-${Date.now()}.db`);
 
     memory = new DatabaseMemory(dbPath);
@@ -34,7 +57,12 @@ describe('ToolExecutor - Integration Tests', () => {
     memory.createSession(sessionId, workspace);
 
     executor = new ToolExecutor(
-      { ...config, workspaceDir: workspace, dbPath },
+      {
+        ...config,
+        workspaceDir: workspace,
+        dbPath,
+        hostWorkspaceDir: workspace,
+      },
       memory,
       sessionId
     );
@@ -61,7 +89,9 @@ describe('ToolExecutor - Integration Tests', () => {
       });
 
       expect(readResult.success).toBe(true);
-      expect((readResult.result as any).content).toContain('hello');
+      expect((readResult.result as Record<string, unknown>).content).toContain(
+        'hello'
+      );
     });
 
     it('should list files after writing', async () => {
@@ -108,29 +138,41 @@ describe('ToolExecutor - Integration Tests', () => {
         input: { path: 'patch.ts' },
       });
 
-      expect((readResult.result as any).content).toContain('42');
+      expect((readResult.result as Record<string, unknown>).content).toContain(
+        '42'
+      );
     });
   });
 
-  describe('Shell Command Integration', () => {
-    it('should execute allowed shell commands', async () => {
+  describe('Script Execution Integration', () => {
+    it('should execute node scripts', async () => {
+      // First write a script to execute
+      await executor.execute({
+        name: 'write_file',
+        input: {
+          path: 'test-script.js',
+          content: 'console.log("integration-test");',
+        },
+      });
+
       const result = await executor.execute({
-        name: 'shell_command',
-        input: { command: 'echo', args: ['integration-test'] },
+        name: 'run_node_script',
+        input: { scriptPath: 'test-script.js' },
       });
 
       expect(result.success).toBe(true);
-      expect((result.result as any).stdout).toContain('integration-test');
+      expect((result.result as Record<string, unknown>).stdout).toContain(
+        'integration-test'
+      );
     });
 
-    it('should block disallowed commands', async () => {
+    it('should handle script failures gracefully', async () => {
       const result = await executor.execute({
-        name: 'shell_command',
-        input: { command: 'curl', args: ['https://evil.com'] },
+        name: 'run_node_script',
+        input: { scriptPath: 'nonexistent-script.js' },
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('not allowed');
     });
   });
 
@@ -138,7 +180,11 @@ describe('ToolExecutor - Integration Tests', () => {
     it('should persist and retrieve memory across operations', async () => {
       await executor.execute({
         name: 'memory_set',
-        input: { key: 'test.preference', value: 'TypeScript strict mode', category: 'config' },
+        input: {
+          key: 'test.preference',
+          value: 'TypeScript strict mode',
+          category: 'config',
+        },
       });
 
       const getResult = await executor.execute({
@@ -147,8 +193,10 @@ describe('ToolExecutor - Integration Tests', () => {
       });
 
       expect(getResult.success).toBe(true);
-      expect((getResult.result as any).value).toBe('TypeScript strict mode');
-      expect((getResult.result as any).found).toBe(true);
+      expect((getResult.result as Record<string, unknown>).value).toBe(
+        'TypeScript strict mode'
+      );
+      expect((getResult.result as Record<string, unknown>).found).toBe(true);
     });
 
     it('should return not found for missing key', async () => {
@@ -158,15 +206,15 @@ describe('ToolExecutor - Integration Tests', () => {
       });
 
       expect(result.success).toBe(true);
-      expect((result.result as any).found).toBe(false);
+      expect((result.result as Record<string, unknown>).found).toBe(false);
     });
   });
 
   describe('Validation Integration', () => {
     it('should fail validation with detailed error for bad input', async () => {
       const result = await executor.execute({
-        name: 'shell_command',
-        input: { command: 'npm', timeout: 999999 }, // exceeds max
+        name: 'read_file',
+        input: { path: '' }, // empty path should fail validation
       });
 
       expect(result.success).toBe(false);
@@ -187,7 +235,7 @@ describe('ToolExecutor - Integration Tests', () => {
   describe('Tool Call Recording', () => {
     it('should record tool calls in database', async () => {
       await executor.execute({
-        name: 'echo' as any,
+        name: 'echo' as string,
         input: {},
       });
 
