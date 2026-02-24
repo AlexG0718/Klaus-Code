@@ -67,10 +67,11 @@ function AgentApp() {
   // Diff preview modal for patch approvals
   const [pendingPatch, setPendingPatch] = useState<PatchApprovalEvent['data'] | null>(null);
 
-  const { 
-    connected, isRunning, currentSessionId, 
-    selectedModel, setSelectedModel,
-    sendPrompt, cancelSession, onEvent, respondToPatchApproval 
+  const {
+    connected, isRunning, currentSessionId,
+    planningModel, setPlanningModel,
+    codingModel, setCodingModel,
+    sendPrompt, cancelSession, onEvent, respondToPatchApproval
   } = useAgentSocket();
 
   // Fetch server config including token budget
@@ -192,12 +193,21 @@ function AgentApp() {
         />
         <span className="text-sm font-bold text-purple-400">AI Dev Agent</span>
         
-        {/* Model selector */}
-        <ModelSelector
-          selectedModel={selectedModel}
-          onSelect={setSelectedModel}
-          disabled={isRunning}
-        />
+        {/* Dual model selectors: Planning and Coding */}
+        <div className="flex items-center gap-3">
+          <ModelSelector
+            label="Plan"
+            selectedModel={planningModel}
+            onSelect={setPlanningModel}
+            disabled={isRunning}
+          />
+          <ModelSelector
+            label="Code"
+            selectedModel={codingModel}
+            onSelect={setCodingModel}
+            disabled={isRunning}
+          />
+        </div>
         
         <span className="ml-auto text-xs bg-gray-800 px-2 py-0.5 rounded text-gray-400">
           {activeSessionId ? `session: ${activeSessionId.slice(0, 8)}…` : 'No active session'}

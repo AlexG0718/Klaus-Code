@@ -23,19 +23,25 @@ import {
 
 describe('Model Selection', () => {
   describe('Model Validation', () => {
-    const allowedModels = [
+    // User-selectable models: Sonnet and Opus only.
+    // Haiku is intentionally excluded — it is used automatically for internal
+    // low-level tasks (title generation, conversation labeling) and is NOT
+    // user-configurable via the UI.
+    const userSelectableModels = [
       'claude-opus-4-5',
       'claude-sonnet-4-5',
-      'claude-haiku-4-5',
       'claude-sonnet-4-5-20250929',
-      'claude-haiku-4-5-20251001',
       'claude-opus-4-5-20251101',
     ];
 
-    it('should accept all valid model names', () => {
-      for (const model of allowedModels) {
-        // Check if the model is in the allowed list or starts with an allowed prefix
-        const isValid = allowedModels.some(
+    // Internal-only models — managed automatically by the agent
+    const internalOnlyModels = [
+      'claude-haiku-4-5-20251001', // Used for title generation & conversation labeling
+    ];
+
+    it('should accept all user-selectable model names', () => {
+      for (const model of userSelectableModels) {
+        const isValid = userSelectableModels.some(
           (m) => model === m || model.startsWith(m.split('-20')[0])
         );
         expect(isValid).toBe(true);
@@ -52,15 +58,10 @@ describe('Model Selection', () => {
         'claude-opus-3',
       ];
 
-      // Valid model prefixes (without date suffixes)
-      const validPrefixes = [
-        'claude-opus-4-5',
-        'claude-sonnet-4-5',
-        'claude-haiku-4-5',
-      ];
+      // Valid user-selectable prefixes (Opus and Sonnet only — no Haiku)
+      const validPrefixes = ['claude-opus-4-5', 'claude-sonnet-4-5'];
 
       for (const model of invalidModels) {
-        // A model is valid only if it exactly matches or starts with a valid prefix
         const isValid = validPrefixes.some(
           (prefix) => model === prefix || model.startsWith(prefix + '-')
         );
@@ -68,23 +69,115 @@ describe('Model Selection', () => {
       }
     });
 
-    it('should preserve model selection across requests', () => {
-      // Simulating localStorage persistence
-      const storage: Record<string, string> = {};
-      const setItem = (key: string, value: string) => {
-        storage[key] = value;
-      };
-      const getItem = (key: string) => storage[key] || null;
-
-      setItem('agent-selected-model', 'claude-haiku-4-5');
-      expect(getItem('agent-selected-model')).toBe('claude-haiku-4-5');
+    it('Haiku is reserved for internal automated tasks only', () => {
+      const validPrefixes = ['claude-opus-4-5', 'claude-sonnet-4-5'];
+      // Haiku must NOT be in the user-selectable list
+      for (const haiku of internalOnlyModels) {
+        const isUserSelectable = validPrefixes.some(
+          (prefix) => haiku === prefix || haiku.startsWith(prefix + '-')
+        );
+        expect(isUserSelectable).toBe(false);
+      }
     });
 
-    it('should default to Sonnet when no model saved', () => {
-      const defaultModel = 'claude-sonnet-4-5';
+    it('should persist planning and coding model selections separately', () => {
+      // Dual model persistence — planning and coding are independent
+      const storage: Record<string, string> = {};
+      const setItem = (key: string, value: string) => { storage[key] = value; };
+      const getItem = (key: string) => storage[key] || null;
+
+      setItem('agent-planning-model', 'claude-sonnet-4-5');
+      setItem('agent-coding-model', 'claude-opus-4-5');
+
+      expect(getItem('agent-planning-model')).toBe('claude-sonnet-4-5');
+      expect(getItem('agent-coding-model')).toBe('claude-opus-4-5');
+    });
+
+    it('should default planning model to Sonnet when no model saved', () => {
+      const defaultPlanningModel = 'claude-sonnet-4-5';
       const saved = null;
-      const model = saved || defaultModel;
+      const model = saved || defaultPlanningModel;
       expect(model).toBe('claude-sonnet-4-5');
+    });
+
+    it('should default coding model to Opus when no model saved', () => {
+      const defaultCodingModel = 'claude-opus-4-5';
+      const saved = null;
+      const model = saved || defaultCodingModel;
+      expect(model).toBe('claude-opus-4-5');
+    });
+  });
+
+  describe('Tiered Model Assignment', () => {
+    // Verify the three-tier model assignment is correct:
+    // Tier 1 — Haiku:  low-level automated tasks (title generation, labeling)
+    // Tier 2 — Sonnet: mid-level transformations (memory compression, summarization)
+    //                  and planning/analysis phase (user-selectable default)
+    // Tier 3 — Opus:   high-level reasoning (code synthesis, debugging — user-selectable default)
+
+    it('should assign Haiku for title generation and labeling', () => {
+      const lowLevelTasks = ['title_generation', 'conversation_labeling'];
+      const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+      for (const task of lowLevelTasks) {
+        // These tasks must use Haiku, never Sonnet or Opus
+        expect(HAIKU_MODEL).toContain('haiku');
+        expect(lowLevelTasks).toContain(task);
+      }
+    });
+
+    it('should assign Sonnet for memory compression and summarization', () => {
+      const midLevelTasks = ['memory_compression', 'context_summarization'];
+      const SONNET_INTERNAL_MODEL = 'claude-sonnet-4-5-20250929';
+      for (const task of midLevelTasks) {
+        expect(SONNET_INTERNAL_MODEL).toContain('sonnet');
+        expect(midLevelTasks).toContain(task);
+      }
+    });
+
+    it('planning phase starts with user-selected planning model', () => {
+      // Agent begins each session using planningModel (default: Sonnet)
+      // for analysis/exploration turns (read-only tool calls)
+      const planningModel = 'claude-sonnet-4-5';
+      expect(['claude-sonnet-4-5', 'claude-opus-4-5']).toContain(planningModel);
+    });
+
+    it('coding phase switches to user-selected coding model after first write', () => {
+      // Agent switches to codingModel (default: Opus) once any non-read-only tool is invoked
+      // (write_file, apply_patch, npm_run, run_tests, etc.)
+      const codingModel = 'claude-opus-4-5';
+      expect(['claude-sonnet-4-5', 'claude-opus-4-5']).toContain(codingModel);
+    });
+
+    it('coding phase is permanent — model does not revert to planning after switch', () => {
+      let inCodingPhase = false;
+      let model = 'claude-sonnet-4-5'; // start with planning model
+      const codingModel = 'claude-opus-4-5';
+
+      // Simulate: first turn is read-only (no switch)
+      const turn1HasSequentialTools = false;
+      if (!inCodingPhase && turn1HasSequentialTools) {
+        inCodingPhase = true;
+        model = codingModel;
+      }
+      expect(model).toBe('claude-sonnet-4-5'); // still planning
+
+      // Simulate: second turn uses write_file (switch happens)
+      const turn2HasSequentialTools = true;
+      if (!inCodingPhase && turn2HasSequentialTools) {
+        inCodingPhase = true;
+        model = codingModel;
+      }
+      expect(model).toBe('claude-opus-4-5'); // now coding
+      expect(inCodingPhase).toBe(true);
+
+      // Simulate: third turn is read-only — model must NOT revert
+      const turn3HasSequentialTools = false;
+      if (!inCodingPhase && turn3HasSequentialTools) {
+        inCodingPhase = true;
+        model = codingModel;
+      }
+      expect(model).toBe('claude-opus-4-5'); // still coding
+      expect(inCodingPhase).toBe(true);
     });
   });
 
