@@ -1,5 +1,13 @@
 /**
  * Tests for Docker sandbox routing across BuildTool, LintTool, ScriptTool, TestTool.
+ *
+ * Strategy: mock DockerSandbox.execute() and verify:
+ *   - When sandbox is provided, execute() is called instead of spawn()
+ *   - Host paths are translated to /workspace equivalents
+ *   - Subdirectory cwd is prefixed with `cd /workspace/subdir &&`
+ *   - Sensitive env keys are scrubbed from the sandbox env
+ *   - When sandbox is null (DOCKER_ENABLED=false), spawn() is used
+ *   - The sandbox is constructed once in ToolExecutor and shared
  */
 
 import * as path from 'path';
@@ -8,6 +16,8 @@ import * as fs from 'fs-extra';
 
 jest.mock('child_process', () => ({ spawn: jest.fn() }));
 jest.mock('../../sandbox/DockerSandbox');
+// FIX: Added GitTool mock to prevent "directory does not exist" error
+jest.mock('../../tools/GitTool');
 
 import { spawn } from 'child_process';
 import { DockerSandbox } from '../../sandbox/DockerSandbox';
@@ -66,7 +76,7 @@ function makeFullConfig(overrides: Partial<Config> = {}): Config {
     hostWorkspaceDir: '/tmp/ws',
     dbPath: ':memory:',
     logDir: '/tmp',
-    model: 'claude-opus-4-5',
+    model: 'claude-sonnet-4-20250514',
     maxTokens: 1024,
     maxRetries: 1,
     apiSecret: undefined,
@@ -427,11 +437,23 @@ describe('TestTool sandbox routing', () => {
 // ─── ToolExecutor creates one shared sandbox ──────────────────────────────────
 
 describe('ToolExecutor sandbox sharing', () => {
+  let tempWorkspace: string;
+
+  beforeEach(async () => {
+    // FIX: Create a real temp directory to satisfy any remaining GitTool references
+    tempWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), 'toolexec-test-'));
+    MockDockerSandbox.mockClear();
+  });
+
+  afterEach(async () => {
+    await fs.remove(tempWorkspace);
+    jest.resetModules();
+  });
+
   it('creates exactly one DockerSandbox instance when dockerEnabled is true', async () => {
     const { ToolExecutor } = await import('../../tools/ToolExecutor');
     const { DatabaseMemory } = await import('../../memory/DatabaseMemory');
 
-    jest.mock('../../memory/DatabaseMemory');
     const mem = new DatabaseMemory(':memory:');
     mem.recordToolCall = jest.fn();
     mem.getKnowledge = jest.fn().mockReturnValue(undefined);
@@ -439,27 +461,35 @@ describe('ToolExecutor sandbox sharing', () => {
 
     MockDockerSandbox.mockClear();
 
-    new ToolExecutor(
-      makeFullConfig({ dockerEnabled: true }),
-      mem,
-      'test-session'
-    );
+    const config = makeFullConfig({
+      dockerEnabled: true,
+      workspaceDir: tempWorkspace,
+      hostWorkspaceDir: tempWorkspace,
+    });
+
+    new ToolExecutor(config, mem, 'test-session');
 
     expect(MockDockerSandbox).toHaveBeenCalledTimes(1);
   });
 
   it('creates no DockerSandbox when dockerEnabled is false', async () => {
     const { ToolExecutor } = await import('../../tools/ToolExecutor');
+    const { DatabaseMemory } = await import('../../memory/DatabaseMemory');
+
+    const mem = new DatabaseMemory(':memory:');
+    mem.recordToolCall = jest.fn();
+    mem.getKnowledge = jest.fn().mockReturnValue(undefined);
+    mem.setKnowledge = jest.fn();
+
     MockDockerSandbox.mockClear();
 
-    const { DatabaseMemory } = await import('../../memory/DatabaseMemory');
-    const mem = new DatabaseMemory(':memory:');
+    const config = makeFullConfig({
+      dockerEnabled: false,
+      workspaceDir: tempWorkspace,
+      hostWorkspaceDir: tempWorkspace,
+    });
 
-    new ToolExecutor(
-      makeFullConfig({ dockerEnabled: false }),
-      mem,
-      'test-session'
-    );
+    new ToolExecutor(config, mem, 'test-session');
 
     expect(MockDockerSandbox).not.toHaveBeenCalled();
   });
