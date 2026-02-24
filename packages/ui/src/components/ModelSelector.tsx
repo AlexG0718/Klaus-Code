@@ -3,12 +3,13 @@ import type { ModelOption } from '../hooks/useAgentSocket';
 import { MODEL_INFO } from '../hooks/useAgentSocket';
 
 interface Props {
+  label: string;
   selectedModel: ModelOption;
   onSelect: (model: ModelOption) => void;
   disabled?: boolean;
 }
 
-export function ModelSelector({ selectedModel, onSelect, disabled }: Props) {
+export function ModelSelector({ label, selectedModel, onSelect, disabled }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -23,7 +24,7 @@ export function ModelSelector({ selectedModel, onSelect, disabled }: Props) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const models: ModelOption[] = ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-5'];
+  const models: ModelOption[] = ['claude-sonnet-4-5', 'claude-opus-4-5'];
   const currentInfo = MODEL_INFO[selectedModel];
 
   // Cost indicator dots
@@ -44,20 +45,23 @@ export function ModelSelector({ selectedModel, onSelect, disabled }: Props) {
   };
 
   return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-xs text-gray-500 font-medium uppercase tracking-wider">{label}</span>
     <div className="relative" ref={dropdownRef}>
       <button
+        type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
         className={`
           flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm
           border border-gray-700 bg-gray-800/50
-          ${disabled 
-            ? 'opacity-50 cursor-not-allowed' 
+          ${disabled
+            ? 'opacity-50 cursor-not-allowed'
             : 'hover:bg-gray-700/50 hover:border-gray-600 cursor-pointer'
           }
           transition-colors
         `}
-        title={`Model: ${currentInfo.name} - ${currentInfo.description}`}
+        title={`${label} model: ${currentInfo.name} — ${currentInfo.description}`}
       >
         <span className="text-purple-400 font-medium">{currentInfo.name}</span>
         {costDots(currentInfo.costMultiplier)}
@@ -72,15 +76,16 @@ export function ModelSelector({ selectedModel, onSelect, disabled }: Props) {
       </button>
 
       {isOpen && (
-        <div className="absolute top-full mt-2 left-0 w-56 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden">
+        <div className="absolute top-full mt-2 left-0 w-52 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden">
           <div className="px-3 py-2 border-b border-gray-700 text-xs text-gray-500">
-            Select Model
+            {label} model
           </div>
           {models.map((model) => {
             const info = MODEL_INFO[model];
             const isSelected = model === selectedModel;
             return (
               <button
+                type="button"
                 key={model}
                 onClick={() => {
                   onSelect(model);
@@ -109,11 +114,9 @@ export function ModelSelector({ selectedModel, onSelect, disabled }: Props) {
               </button>
             );
           })}
-          <div className="px-3 py-2 border-t border-gray-700 text-xs text-gray-600">
-            💡 Use Haiku for simple tasks, Opus for complex code
-          </div>
         </div>
       )}
+    </div>
     </div>
   );
 }

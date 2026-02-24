@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/alexgreenberg/Repos/Klaus-Code_4.0/packages -type f -name \"*.ts\" ! -path \"*/node_modules/*\" ! -path \"*/__tests__/*\" -exec grep -l \"task\\\\|Task\\\\|TASK\" {} ;)",
+      "Bash(npx tsc -p packages/agent/tsconfig.json --noEmit)",
+      "Bash(npx tsc -p packages/ui/tsconfig.json --noEmit)",
+      "Bash(npx jest --testPathPattern=\"NewFeatures|AgentLimits|AgentServer\" --no-coverage)",
+      "Bash(npx jest --testPathPattern=\"unit/NewFeatures|unit/AgentLimits|unit/AgentServer\" --no-coverage)",
+      "Bash(npx jest --config packages/agent/jest.config.ts --testPathPattern=\"unit/NewFeatures|unit/AgentLimits|unit/AgentServer\" --no-coverage)",
+      "Bash(npx jest --config packages/agent/jest.config.ts --testPathPattern=\"unit\" --no-coverage)",
+      "Bash(npx jest --config packages/agent/jest.config.ts --testPathPattern=\"unit/DatabaseMemory\" --no-coverage)",
+      "Bash(npx jest --config packages/agent/jest.config.ts --testPathPattern=unit --no-coverage)",
+      "Bash(npm run lint -w packages/agent)",
+      "Bash(npx jest --testPathPattern=integration --no-coverage)",
+      "Bash(npm run build -w packages/agent)",
+      "Bash(npm run build -w packages/ui)",
+      "Bash(npm run build)",
+      "Bash(git -C /Users/alexgreenberg/Repos/Klaus-Code_4.0 status)",
+      "Bash(git -C /Users/alexgreenberg/Repos/Klaus-Code_4.0 diff --stat)",
+      "Bash(git -C /Users/alexgreenberg/Repos/Klaus-Code_4.0 add packages/agent/src/__tests__/unit/NewFeatures.test.ts packages/agent/src/agent/Agent.ts packages/agent/src/server/AgentServer.ts packages/ui/src/App.tsx packages/ui/src/components/ModelSelector.tsx packages/ui/src/hooks/useAgentSocket.ts)",
+      "Bash(git -C /Users/alexgreenberg/Repos/Klaus-Code_4.0 log --oneline -3)",
+      "Bash(git -C:*)",
+      "Bash(npx jest --config /Users/alexgreenberg/Repos/Klaus-Code_4.0/packages/agent/jest.config.ts --testPathPattern=\"unit/NewFeatures\" --no-coverage)"
+    ]
+  }
+}

@@ -9,10 +9,9 @@ const API_SECRET = import.meta.env.VITE_API_SECRET ?? '';
 // Maximum number of event handlers to prevent memory leaks
 const MAX_HANDLERS = 50;
 
-export type ModelOption =
-  | 'claude-opus-4-5'
-  | 'claude-sonnet-4-5'
-  | 'claude-haiku-4-5';
+// Haiku is intentionally absent — it is used automatically for internal tasks
+// (title generation, conversation labeling) and is not user-configurable.
+export type ModelOption = 'claude-opus-4-5' | 'claude-sonnet-4-5';
 
 export const MODEL_INFO: Record<
   ModelOption,
@@ -20,18 +19,13 @@ export const MODEL_INFO: Record<
 > = {
   'claude-opus-4-5': {
     name: 'Opus',
-    description: 'Most capable, highest cost',
+    description: 'Best reasoning & complex code',
     costMultiplier: 1,
   },
   'claude-sonnet-4-5': {
     name: 'Sonnet',
-    description: 'Balanced performance/cost',
+    description: 'Balanced performance & cost',
     costMultiplier: 0.2,
-  },
-  'claude-haiku-4-5': {
-    name: 'Haiku',
-    description: 'Fast and affordable',
-    costMultiplier: 0.05,
   },
 };
 
@@ -39,8 +33,10 @@ interface UseAgentSocketReturn {
   connected: boolean;
   isRunning: boolean;
   currentSessionId: string | null;
-  selectedModel: ModelOption;
-  setSelectedModel: (model: ModelOption) => void;
+  planningModel: ModelOption;
+  setPlanningModel: (model: ModelOption) => void;
+  codingModel: ModelOption;
+  setCodingModel: (model: ModelOption) => void;
   sendPrompt: (message: string, sessionId?: string) => string;
   cancelSession: (sessionId: string) => void;
   onEvent: (handler: (event: AgentEvent) => void) => () => void;
@@ -51,28 +47,45 @@ export function useAgentSocket(): UseAgentSocketReturn {
   const [connected, setConnected] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState<ModelOption>(() => {
+
+  const readModel = (key: string, fallback: ModelOption): ModelOption => {
     try {
-      const saved = localStorage.getItem('agent-selected-model');
+      const saved = localStorage.getItem(key);
       if (saved && saved in MODEL_INFO) return saved as ModelOption;
     } catch {
       /* localStorage unavailable */
     }
-    return 'claude-sonnet-4-5'; // Default to Sonnet for balanced cost/performance
-  });
+    return fallback;
+  };
+
+  const [planningModel, setPlanningModel] = useState<ModelOption>(() =>
+    readModel('agent-planning-model', 'claude-opus-4-5')
+  );
+  const [codingModel, setCodingModel] = useState<ModelOption>(() =>
+    readModel('agent-coding-model', 'claude-opus-4-5')
+  );
+
   const socketRef = useRef<Socket | null>(null);
   // Use a Set to prevent duplicate handlers and track them by reference
   const handlersRef = useRef<Set<(event: AgentEvent) => void>>(new Set());
   const currentSessionIdRef = useRef<string | null>(null);
 
-  // Persist model selection
+  // Persist model selections
   useEffect(() => {
     try {
-      localStorage.setItem('agent-selected-model', selectedModel);
+      localStorage.setItem('agent-planning-model', planningModel);
     } catch {
       /* localStorage unavailable */
     }
-  }, [selectedModel]);
+  }, [planningModel]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('agent-coding-model', codingModel);
+    } catch {
+      /* localStorage unavailable */
+    }
+  }, [codingModel]);
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -149,11 +162,12 @@ export function useAgentSocket(): UseAgentSocketReturn {
       socketRef.current?.emit('prompt', {
         message,
         sessionId: sid,
-        model: selectedModel,
+        planningModel,
+        codingModel,
       });
       return sid;
     },
-    [selectedModel]
+    [planningModel, codingModel]
   );
 
   const cancelSession = useCallback((sessionId: string) => {
@@ -172,8 +186,10 @@ export function useAgentSocket(): UseAgentSocketReturn {
     connected,
     isRunning,
     currentSessionId,
-    selectedModel,
-    setSelectedModel,
+    planningModel,
+    setPlanningModel,
+    codingModel,
+    setCodingModel,
     sendPrompt,
     cancelSession,
     onEvent,

@@ -45,10 +45,11 @@ export interface AgentEvent {
 
 type EventHandler = (event: AgentEvent) => void;
 
-// ─── Model for internal/background tasks ─────────────────────────────────────
-// Use Haiku for summarization, preprocessing, and other tasks that don't require
-// the full capability of Opus/Sonnet. This is ~20x cheaper than Opus.
-const INTERNAL_MODEL = 'claude-haiku-4-5-20251001';
+// ─── Models for automated background tasks (not user-configurable) ───────────
+// Haiku: low-level tasks — title generation, conversation labeling (~20x cheaper than Opus)
+const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+// Sonnet: mid-level transformations — memory compression, context summarization
+const SONNET_INTERNAL_MODEL = 'claude-sonnet-4-5-20250929';
 
 // ─── Secret patterns scanned before every git checkpoint ──────────────────────
 const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
@@ -603,26 +604,32 @@ export class Agent {
     userMessage: string,
     sessionId?: string,
     onEvent?: EventHandler,
-    options?: { model?: string }
+    options?: { model?: string; planningModel?: string; codingModel?: string }
   ): Promise<AgentRunResult> {
     const sid = sessionId ?? uuidv4();
     const start = Date.now();
 
     // Model override (validated against allowed list)
+    // Haiku is intentionally excluded — it is reserved for automated internal tasks only
     const allowedModels = [
       'claude-opus-4-5',
       'claude-sonnet-4-5',
-      'claude-haiku-4-5',
       'claude-sonnet-4-5-20250929',
-      'claude-haiku-4-5-20251001',
       'claude-opus-4-5-20251101',
     ];
-    const requestedModel = options?.model || this.config.model;
-    const model = allowedModels.some((m) =>
-      requestedModel.includes(m.replace('-4-5', ''))
-    )
-      ? requestedModel
-      : this.config.model;
+    const validateModel = (m?: string): string => {
+      if (!m) return this.config.model;
+      return allowedModels.some((a) => m.includes(a.replace('-4-5', '')))
+        ? m
+        : this.config.model;
+    };
+
+    // Planning model: used for analysis/exploration turns (read-only tool turns)
+    // Coding model: used once any code-writing tool is invoked — stays active for the rest of the session
+    const planningModel = validateModel(options?.planningModel ?? options?.model);
+    const codingModel = validateModel(options?.codingModel ?? options?.planningModel ?? options?.model);
+    let model = planningModel;
+    let inCodingPhase = false;
 
     // ── Concurrent session limit (atomic check-and-increment) ─────────────
     const maxConcurrent = this.config.maxConcurrentSessions;
@@ -1166,6 +1173,14 @@ export class Agent {
           toolResults.push(param);
         }
 
+        // Switch to coding model once any code-writing/exec tool has been invoked.
+        // Sequential tools are all non-read-only (writes, shell, git, npm, etc.).
+        // Once in coding phase, the model stays for the remainder of the session.
+        if (!inCodingPhase && sequential.length > 0) {
+          inCodingPhase = true;
+          model = codingModel;
+        }
+
         messages.push({ role: 'user', content: toolResults });
       }
 
@@ -1326,7 +1341,7 @@ export class Agent {
       .join('\n\n');
 
     const response = await this.client.messages.create({
-      model: INTERNAL_MODEL, // Haiku for summarization — 20x cheaper than Opus
+      model: SONNET_INTERNAL_MODEL, // Sonnet for summarization — mid-level transformation
       max_tokens: 1024,
       messages: [
         {
@@ -1351,7 +1366,7 @@ export class Agent {
   ): Promise<string> {
     try {
       const response = await this.client.messages.create({
-        model: INTERNAL_MODEL,
+        model: HAIKU_MODEL,
         max_tokens: 100,
         messages: [
           {

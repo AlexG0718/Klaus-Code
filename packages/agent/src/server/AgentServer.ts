@@ -524,7 +524,7 @@ export class AgentServer {
 
     // ── Run prompt ────────────────────────────────────────────────────────
     this.app.post('/api/prompt', async (req: Request, res: Response) => {
-      const { message, sessionId, model } = req.body;
+      const { message, sessionId, model, planningModel, codingModel } = req.body;
 
       if (!message || typeof message !== 'string') {
         return res
@@ -567,7 +567,7 @@ export class AgentServer {
           (event: AgentEvent) => {
             this.io.to(sid).emit('agent_event', event);
           },
-          { model }
+          { model, planningModel, codingModel }
         );
         return res.json({ requestId: req.requestId, ...result });
       } catch (err: any) {
@@ -1100,6 +1100,8 @@ export class AgentServer {
             message: string;
             sessionId?: string;
             model?: string;
+            planningModel?: string;
+            codingModel?: string;
           }) => {
             const sid = data.sessionId ?? uuidv4();
             socket.join(sid);
@@ -1165,7 +1167,7 @@ export class AgentServer {
                     if (!resultData.success) this.metrics.toolCallErrors++;
                   }
                 },
-                { model: data.model }
+                { model: data.model, planningModel: data.planningModel, codingModel: data.codingModel }
               );
 
               // Track token usage
