@@ -6,6 +6,7 @@ import { LintTool }    from './LintTool';
 import { ScriptTool }  from './ScriptTool';
 import { GitTool }     from './GitTool';
 import { TestTool }    from './TestTool';
+import { CITool }      from './CITool';
 import { deployToNetlify } from './DeployTool';
 import { deployToVercel }  from './VercelTool';
 import { deployToS3 }      from './AWSTool';
@@ -34,6 +35,8 @@ import {
   GitResetSchema, GitRemoteSchema,
   // Test
   RunTestsSchema,
+  // CI
+  RunCISchema,
   // Memory
   MemorySetSchema, MemoryGetSchema,
   // Deploy
@@ -69,7 +72,8 @@ export type ProgressCallback = (progress: ToolProgress) => void;
 
 // Long-running tools that benefit from progress tracking
 const LONG_RUNNING_TOOLS = new Set([
-  'npm_install', 'npm_run', 'run_tests', 'git_clone', 
+  'npm_install', 'npm_run', 'run_tests', 'git_clone',
+  'run_ci',
   'deploy_netlify', 'deploy_vercel', 'deploy_aws_s3',
   'terraform_init', 'terraform_plan', 'terraform_apply', 'terraform_destroy',
   'generate_infrastructure',
@@ -448,6 +452,26 @@ export const TOOL_DEFINITIONS = [
     },
   },
 
+  // ── CI ────────────────────────────────────────────────────────────────────
+  {
+    name: 'run_ci',
+    description:
+      'Run GitHub Actions workflows locally using `act` before pushing commits. ' +
+      'Executes: act -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:full-latest --container-architecture linux/amd64. ' +
+      'Returns pass/fail status, raw output, and a list of failure lines. ' +
+      'MUST be called before git_push to verify CI passes. ' +
+      'If CI fails, analyse the raw_output and failures, fix the issues, then re-run before pushing.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: 'Directory containing .github/workflows. Defaults to workspace root.' },
+        workflow:  { type: 'string', description: 'Specific workflow file path (e.g. ".github/workflows/ci.yml"). All workflows run if omitted.' },
+        job:       { type: 'string', description: 'Specific job name to run. All jobs run if omitted.' },
+        timeout:   { type: 'number', default: 1800000, description: 'Timeout ms. Default 30 min.' },
+      },
+    },
+  },
+
   // ── Memory ────────────────────────────────────────────────────────────────
   {
     name: 'memory_set',
@@ -650,6 +674,7 @@ const schemaMap: Record<string, ZodSchema> = {
   git_reset:        GitResetSchema,
   git_remote:       GitRemoteSchema,
   run_tests:        RunTestsSchema,
+  run_ci:           RunCISchema,
   memory_set:       MemorySetSchema,
   memory_get:       MemoryGetSchema,
   deploy_netlify:   DeploySchema,
@@ -670,6 +695,7 @@ function getProgressStatus(toolName: string, progress: number): string {
     npm_install: ['Resolving dependencies...', 'Downloading packages...', 'Linking packages...', 'Building modules...'],
     npm_run: ['Starting script...', 'Running...', 'Processing...', 'Finishing...'],
     run_tests: ['Collecting tests...', 'Running tests...', 'Generating coverage...', 'Finalizing...'],
+    run_ci: ['Pulling runner image...', 'Starting workflow jobs...', 'Running CI steps...', 'Finalizing...'],
     git_clone: ['Connecting to remote...', 'Receiving objects...', 'Resolving deltas...', 'Checking out files...'],
     deploy_netlify: ['Preparing build...', 'Uploading files...', 'Processing deploy...', 'Finalizing...'],
     deploy_vercel: ['Connecting to Vercel...', 'Building project...', 'Deploying...', 'Finalizing...'],
@@ -698,6 +724,7 @@ export class ToolExecutor {
   private scriptTool: ScriptTool;
   private gitTool:    GitTool;
   private testTool:   TestTool;
+  private ciTool:     CITool;
 
   constructor(
     private readonly config:    Config,
@@ -723,6 +750,7 @@ export class ToolExecutor {
     this.scriptTool = new ScriptTool(config.workspaceDir, sandbox);
     this.gitTool    = new GitTool(config.workspaceDir);
     this.testTool   = new TestTool(config.workspaceDir,   sandbox);
+    this.ciTool     = new CITool(config.workspaceDir);
   }
 
   async execute(
@@ -872,6 +900,8 @@ export class ToolExecutor {
       case 'git_remote':      return this.gitTool.remote(input as any);
       // ── Test ────────────────────────────────────────────────────────────
       case 'run_tests':       return this.testTool.runTests(input as any);
+      // ── CI ──────────────────────────────────────────────────────────────
+      case 'run_ci':          return this.ciTool.runCI(input as any);
       // ── Memory ──────────────────────────────────────────────────────────
       case 'memory_set': {
         const { key, value, category } = input as any;

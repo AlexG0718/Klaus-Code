@@ -183,6 +183,7 @@ The agent runs inside:
 - Git checkpoint required before mutation
 - Atomic planning required
 - Test-driven mutation loop enforced
+- CI gate required before every git_push (run_ci MUST pass)
 
 When reviewing, evaluate:
 
@@ -468,6 +469,25 @@ INTERACTION RULES
   - Pause.
 - If CRITICAL vulnerability exists → block progression.
 - This is ANALYSIS ONLY — no mutation.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CI GATE (MANDATORY BEFORE git_push)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Before calling git_push you MUST:
+
+1. Call run_ci to execute GitHub Actions workflows locally via 'act'.
+2. If run_ci returns passed=true → proceed with git_push.
+3. If run_ci returns passed=false:
+   a. Read raw_output and failures carefully.
+   b. Identify root cause of each failure (test failures, build errors, lint errors, etc.).
+   c. Fix all failing code using the available file/build/test tools.
+   d. Call run_ci again to verify the fix.
+   e. Repeat steps a–d until CI passes.
+   f. Only then call git_push.
+
+This loop is enforced automatically — git_push will be blocked if run_ci has not passed.
+Never skip or work around the CI gate.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## OUTPUT FORMAT
@@ -1146,6 +1166,87 @@ export class Agent {
             }
           }
 
+          // CI gate before any git push — runs GitHub Actions locally via `act`
+          if (toolUse.name === 'git_push') {
+            this.log.info('Running CI gate before git_push', { sessionId: sid });
+            emit({
+              type: 'tool_call',
+              data: { name: 'run_ci', input: {}, id: 'ci-gate-auto' },
+              timestamp: new Date(),
+            });
+
+            const ciResult = await executor.execute(
+              { name: 'run_ci', input: {} },
+              this.config.maxRetries,
+              onToolProgress,
+            );
+
+            emit({
+              type: 'tool_result',
+              data: {
+                toolCallId: 'ci-gate-auto',
+                toolName: 'run_ci',
+                success: ciResult.success,
+                result: ciResult.result,
+                durationMs: ciResult.durationMs,
+              },
+              timestamp: new Date(),
+            });
+
+            if (!ciResult.success || !(ciResult.result as any)?.passed) {
+              const ci = ciResult.result as any;
+
+              // Build the diagnostic message in priority order:
+              //  1. failure_summary — extracted failure blocks from the FULL output (most useful)
+              //  2. failures[]      — deduplicated single-line failure indicators
+              //  3. raw_output      — tail of the full output for surrounding context
+              // This ensures the agent sees actual errors even when total output is 100 KB+.
+              const parts: string[] = [
+                `⛔ CI gate blocked git_push: local GitHub Actions run failed.`,
+                `Exit code: ${ci?.exitCode ?? 'unknown'} | Output size: ${ci?.total_output_bytes?.toLocaleString() ?? '?'} bytes`,
+                `\nFix all CI failures before pushing.\n`,
+              ];
+
+              if (ci?.failure_summary) {
+                parts.push(`── EXTRACTED FAILURE SECTIONS (from full output) ──\n${ci.failure_summary}`);
+              }
+
+              if (ci?.failures?.length) {
+                parts.push(`\n── FAILURE LINES (${ci.failures.length} total) ──\n${ci.failures.join('\n')}`);
+              }
+
+              if (ci?.raw_output) {
+                parts.push(`\n── RAW OUTPUT TAIL ──\n${ci.raw_output}`);
+              }
+
+              if (!ci && ciResult.error) {
+                parts.push(`\nError: ${ciResult.error}`);
+              }
+
+              const warning = parts.join('\n');
+
+              this.log.warn('CI gate blocked git_push', {
+                sessionId: sid,
+                exitCode: (ciResult.result as any)?.exitCode,
+                failures: (ciResult.result as any)?.failures,
+              });
+              emit({
+                type: 'error',
+                data: { error: warning },
+                timestamp: new Date(),
+              });
+              toolResults.push({
+                type: 'tool_result',
+                tool_use_id: toolUse.id,
+                content: warning,
+                is_error: true,
+              });
+              continue;
+            }
+
+            this.log.info('CI gate passed — proceeding with git_push', { sessionId: sid });
+          }
+
           emit({
             type: 'tool_call',
             data: { name: toolUse.name, input: toolUse.input, id: toolUse.id },
@@ -1629,6 +1730,58 @@ function summarizeLargeOutput(
         );
       }
       return o;
+    },
+
+    run_ci: (o) => {
+      // CI output can be 50-80 KB of JSON. Prioritize diagnostic data in this order:
+      //   1. Metadata (passed, exitCode, sizes, timing)
+      //   2. failure_summary — extracted failure blocks from the FULL act output
+      //   3. failures[]     — deduplicated single-line failure indicators
+      //   4. raw_output     — tail of the combined stdout+stderr
+      // This ordering ensures the most actionable data survives truncation.
+      try {
+        const ci = JSON.parse(o);
+        const meta = JSON.stringify({
+          passed: ci.passed,
+          exitCode: ci.exitCode,
+          total_output_bytes: ci.total_output_bytes,
+          duration_ms: ci.duration_ms,
+          workflow: ci.workflow ?? null,
+          job: ci.job ?? null,
+        }, null, 2);
+
+        const sections: string[] = [meta];
+
+        if (ci.failure_summary) {
+          sections.push(`\n\n── FAILURE SECTIONS (extracted from full output) ──\n${ci.failure_summary}`);
+        }
+        if (ci.failures?.length) {
+          sections.push(`\n\n── FAILURE LINES (${ci.failures.length} total) ──\n${ci.failures.join('\n')}`);
+        }
+        if (ci.raw_output) {
+          sections.push(`\n\n── RAW OUTPUT TAIL ──\n${ci.raw_output}`);
+        }
+
+        // Try to fit all sections; if not, progressively trim from the back.
+        let result = sections.join('');
+        if (result.length <= maxChars) return result;
+
+        // Drop raw_output first, keeping the more structured failure data.
+        result = sections.slice(0, -1).join('');
+        if (result.length <= maxChars) {
+          const rawBudget = maxChars - result.length - 40;
+          if (rawBudget > 200 && ci.raw_output) {
+            result += `\n\n── RAW OUTPUT TAIL (last ${rawBudget} chars) ──\n` + ci.raw_output.slice(-rawBudget);
+          }
+          return result;
+        }
+
+        // Still too long — truncate the whole thing keeping as much as fits.
+        return result.slice(0, maxChars) + '\n[...truncated for context limit...]';
+      } catch {
+        /* not JSON, fall through to generic truncation */
+        return o;
+      }
     },
   };
 

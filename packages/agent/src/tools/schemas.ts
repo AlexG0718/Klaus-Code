@@ -268,6 +268,21 @@ export const GenerateInfrastructureSchema = z.object({
   }).optional(),
 });
 
+// ─── CI Tool ──────────────────────────────────────────────────────────────────
+
+export const RunCISchema = z.object({
+  directory: z.string().optional()
+    .describe('Directory containing the git repo and .github/workflows. Defaults to workspace root.'),
+  workflow: z.string().optional()
+    .describe('Path to a specific workflow file, e.g. ".github/workflows/ci.yml". Runs all workflows if omitted.'),
+  job: z.string().optional()
+    .describe('Run only a specific job from the workflow. Runs all jobs if omitted.'),
+  timeout: z.number().int().min(30_000).max(3_600_000).default(1_800_000)
+    .describe('Timeout in milliseconds. Default 30 minutes.'),
+});
+
+export type RunCIInput = z.infer<typeof RunCISchema>;
+
 // ─── Type exports ─────────────────────────────────────────────────────────────
 
 export type ReadFileInput = z.infer<typeof ReadFileSchema>;
