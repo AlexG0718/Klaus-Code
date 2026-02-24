@@ -1,4 +1,4 @@
-# 🤖 Klaus-Code 4.0
+# 🤖 Klaus-Code v4.2.1
 
 A production-grade autonomous AI software engineering agent powered by Claude. It runs on your local machine inside Docker, has full access to a workspace you point it at, and can build applications, write tests, refactor code, and deploy to **Netlify, Vercel, or AWS** — all without human intervention.
 
