@@ -24,7 +24,7 @@ export function ModelSelector({ label, selectedModel, onSelect, disabled }: Prop
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const models: ModelOption[] = ['claude-sonnet-4-5', 'claude-opus-4-5'];
+  const models: ModelOption[] = ['claude-sonnet-4-6', 'claude-opus-4-5'];
   const currentInfo = MODEL_INFO[selectedModel];
 
   // Cost indicator dots

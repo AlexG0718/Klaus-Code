@@ -29,7 +29,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     hostWorkspaceDir: '/tmp/ws',
     dbPath: ':memory:',
     logDir: '/tmp',
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-opus-4-5',
     maxTokens: 1024,
     maxRetries: 1,
     apiSecret: 'a-valid-secret-longer-than-16-chars',

@@ -49,7 +49,7 @@ type EventHandler = (event: AgentEvent) => void;
 // Haiku: low-level tasks — title generation, conversation labeling (~20x cheaper than Opus)
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
 // Sonnet: mid-level transformations — memory compression, context summarization
-const SONNET_INTERNAL_MODEL = 'claude-sonnet-4-5-20250929';
+const SONNET_INTERNAL_MODEL = 'claude-sonnet-4-6';
 
 // ─── Secret patterns scanned before every git checkpoint ──────────────────────
 const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
@@ -611,17 +611,18 @@ export class Agent {
 
     // Model override (validated against allowed list)
     // Haiku is intentionally excluded — it is reserved for automated internal tasks only
-    const allowedModels = [
+    const allowedModels = new Set([
+      // Opus 4.5 — user-selectable
       'claude-opus-4-5',
+      'claude-opus-4-5-20251101',
+      // Sonnet 4.6 (current) and 4.5 (legacy) — user-selectable
+      'claude-sonnet-4-6',
       'claude-sonnet-4-5',
       'claude-sonnet-4-5-20250929',
-      'claude-opus-4-5-20251101',
-    ];
+    ]);
     const validateModel = (m?: string): string => {
-      if (!m) return this.config.model;
-      return allowedModels.some((a) => m.includes(a.replace('-4-5', '')))
-        ? m
-        : this.config.model;
+      if (!m || !allowedModels.has(m)) return this.config.model;
+      return m;
     };
 
     // Planning model: used for analysis/exploration turns (read-only tool turns)
@@ -661,6 +662,8 @@ export class Agent {
       sessionId: sid,
       messageLength: userMessage.length,
       activeSessions: this.sessionCounter.value,
+      planningModel,
+      codingModel,
     });
 
     // Abort controller for cancel support
@@ -1029,7 +1032,7 @@ export class Agent {
             sessionId: sid,
             role: 'assistant',
             content: fullText,
-            metadata: { model: this.config.model, inputTokens, outputTokens },
+            metadata: { model, inputTokens, outputTokens },
           });
         }
 
