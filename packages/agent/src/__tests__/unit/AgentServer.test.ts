@@ -29,7 +29,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     hostWorkspaceDir: '/tmp/ws',
     dbPath: ':memory:',
     logDir: '/tmp',
-    model: 'claude-opus-4-5',
+    model: 'claude-sonnet-4-20250514',
     maxTokens: 1024,
     maxRetries: 1,
     apiSecret: 'a-valid-secret-longer-than-16-chars',
@@ -63,6 +63,17 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
+// FIX: Define activeSessionCount ONCE at module level with configurable: true
+// This prevents "Cannot redefine property" errors when buildServer is called multiple times
+let activeSessionCountValue = 0;
+
+beforeAll(() => {
+  Object.defineProperty(MockAgent.prototype, 'activeSessionCount', {
+    get: () => activeSessionCountValue,
+    configurable: true,
+  });
+});
+
 function buildServer(configOverrides: Partial<Config> = {}) {
   const config = makeConfig(configOverrides);
   const memory = new MockMemory(':memory:') as jest.Mocked<DatabaseMemory>;
@@ -89,9 +100,9 @@ function buildServer(configOverrides: Partial<Config> = {}) {
       estimatedCostUsd: 0.01,
     },
   });
-  Object.defineProperty(MockAgent.prototype, 'activeSessionCount', {
-    get: jest.fn().mockReturnValue(0),
-  });
+
+  // FIX: Reset the session count value instead of redefining the property
+  activeSessionCountValue = 0;
 
   const agent = new MockAgent(config, memory);
   const server = new AgentServer(agent, memory, config, config.port);
@@ -248,10 +259,10 @@ describe('POST /api/prompt', () => {
   });
 
   it('returns 429 when agent is at max concurrent sessions', async () => {
-    const { server, config, agent } = buildServer({ maxConcurrentSessions: 2 });
-    Object.defineProperty(agent, 'activeSessionCount', {
-      get: jest.fn().mockReturnValue(2),
-    });
+    const { server, config } = buildServer({ maxConcurrentSessions: 2 });
+
+    // FIX: Set the session count to max using the module-level variable
+    activeSessionCountValue = 2;
 
     const app = (server as unknown as { app: express.Application }).app;
     const res = await request(app)
