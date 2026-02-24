@@ -1,6 +1,4 @@
 import request from 'supertest';
-import { createServer } from 'http';
-import express from 'express';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs-extra';
@@ -17,6 +15,7 @@ describe('AgentServer - Integration Tests', () => {
   let mockAgent: jest.Mocked<Agent>;
   let dbPath: string;
   let memory: DatabaseMemory;
+  let config: Config;
 
   const testPort = 3099;
 
@@ -25,17 +24,38 @@ describe('AgentServer - Integration Tests', () => {
     memory = new DatabaseMemory(dbPath);
     await memory.initialize();
 
-    const config: Config = {
+    config = {
       apiKey: 'test',
       workspaceDir: os.tmpdir(),
+      hostWorkspaceDir: os.tmpdir(),
       dbPath,
       logDir: os.tmpdir(),
-      model: 'claude-opus-4-5',
+      model: 'claude-sonnet-4-20250514',
       maxTokens: 8192,
       maxRetries: 3,
+      maxContextMessages: 30,
       dockerEnabled: false,
-      allowedCommands: [],
       port: testPort,
+      // Required Config properties
+      trustProxy: false,
+      maxPromptChars: 100_000,
+      maxConcurrentSessions: 5,
+      tokenBudget: 100_000,
+      maxToolCalls: 50,
+      corsOrigin: '*',
+      maxSearchResults: 500,
+      wsRateLimit: 30,
+      shutdownTimeout: 30_000,
+      maxToolResultSize: 10_240,
+      metricsEnabled: false,
+      sessionTtl: 86_400_000,
+      sessionCleanupInterval: 300_000,
+      requirePatchApproval: false,
+      apiRetryCount: 3,
+      apiRetryDelay: 1000,
+      apiRetryMaxDelay: 30_000,
+      maxToolOutputContext: 8_000,
+      debugMode: false,
     };
 
     mockAgent = new Agent(config, memory) as jest.Mocked<Agent>;
@@ -47,20 +67,50 @@ describe('AgentServer - Integration Tests', () => {
       durationMs: 1500,
     });
 
-    server = new AgentServer(mockAgent as any, testPort);
+    // AgentServer constructor expects: (agent, memory, config, port)
+    server = new AgentServer(
+      mockAgent as unknown as Agent,
+      memory,
+      config,
+      testPort
+    );
     await server.start();
   });
 
   afterAll(async () => {
-    await server.stop();
-    memory.close();
+    try {
+      await Promise.race([
+        server.stop(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Stop timeout')), 5000)
+        ),
+      ]);
+    } catch {
+      // Server may already be stopped or timeout - ignore
+    }
+    try {
+      memory.close();
+    } catch {
+      // Ignore close errors
+    }
     await fs.remove(dbPath);
+  }, 10000); // 10 second timeout for afterAll
+
+  beforeEach(() => {
+    // Clear mock calls between tests
+    jest.clearAllMocks();
+    (mockAgent.run as jest.Mock).mockResolvedValue({
+      sessionId: 'test-session',
+      summary: 'Task completed successfully',
+      toolCallsCount: 3,
+      success: true,
+      durationMs: 1500,
+    });
   });
 
   describe('GET /health', () => {
     it('should return 200 with status ok', async () => {
-      const res = await request(`http://localhost:${testPort}`)
-        .get('/health');
+      const res = await request(`http://localhost:${testPort}`).get('/health');
 
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('ok');
@@ -106,15 +156,17 @@ describe('AgentServer - Integration Tests', () => {
       expect(mockAgent.run).toHaveBeenCalledWith(
         'test',
         'my-session-123',
-        expect.any(Function)
+        expect.any(Function),
+        { model: undefined }
       );
     });
   });
 
   describe('GET /api/sessions', () => {
     it('should return sessions array', async () => {
-      const res = await request(`http://localhost:${testPort}`)
-        .get('/api/sessions');
+      const res = await request(`http://localhost:${testPort}`).get(
+        '/api/sessions'
+      );
 
       expect(res.status).toBe(200);
       expect(res.body.sessions).toBeDefined();
