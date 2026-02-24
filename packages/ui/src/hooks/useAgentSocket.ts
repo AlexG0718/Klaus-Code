@@ -59,7 +59,7 @@ export function useAgentSocket(): UseAgentSocketReturn {
   };
 
   const [planningModel, setPlanningModel] = useState<ModelOption>(() =>
-    readModel('agent-planning-model', 'claude-sonnet-4-5')
+    readModel('agent-planning-model', 'claude-opus-4-5')
   );
   const [codingModel, setCodingModel] = useState<ModelOption>(() =>
     readModel('agent-coding-model', 'claude-opus-4-5')

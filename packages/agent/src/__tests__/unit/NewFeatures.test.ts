@@ -93,11 +93,11 @@ describe('Model Selection', () => {
       expect(getItem('agent-coding-model')).toBe('claude-opus-4-5');
     });
 
-    it('should default planning model to Sonnet when no model saved', () => {
-      const defaultPlanningModel = 'claude-sonnet-4-5';
+    it('should default planning model to Opus when no model saved', () => {
+      const defaultPlanningModel = 'claude-opus-4-5';
       const saved = null;
       const model = saved || defaultPlanningModel;
-      expect(model).toBe('claude-sonnet-4-5');
+      expect(model).toBe('claude-opus-4-5');
     });
 
     it('should default coding model to Opus when no model saved', () => {
@@ -112,8 +112,7 @@ describe('Model Selection', () => {
     // Verify the three-tier model assignment is correct:
     // Tier 1 — Haiku:  low-level automated tasks (title generation, labeling)
     // Tier 2 — Sonnet: mid-level transformations (memory compression, summarization)
-    //                  and planning/analysis phase (user-selectable default)
-    // Tier 3 — Opus:   high-level reasoning (code synthesis, debugging — user-selectable default)
+    // Tier 3 — Opus:   high-level reasoning — default for both planning and coding
 
     it('should assign Haiku for title generation and labeling', () => {
       const lowLevelTasks = ['title_generation', 'conversation_labeling'];
@@ -135,9 +134,9 @@ describe('Model Selection', () => {
     });
 
     it('planning phase starts with user-selected planning model', () => {
-      // Agent begins each session using planningModel (default: Sonnet)
+      // Agent begins each session using planningModel (default: Opus)
       // for analysis/exploration turns (read-only tool calls)
-      const planningModel = 'claude-sonnet-4-5';
+      const planningModel = 'claude-opus-4-5';
       expect(['claude-sonnet-4-5', 'claude-opus-4-5']).toContain(planningModel);
     });
 
@@ -150,7 +149,7 @@ describe('Model Selection', () => {
 
     it('coding phase is permanent — model does not revert to planning after switch', () => {
       let inCodingPhase = false;
-      let model = 'claude-sonnet-4-5'; // start with planning model
+      let model = 'claude-opus-4-5'; // start with planning model (default: Opus)
       const codingModel = 'claude-opus-4-5';
 
       // Simulate: first turn is read-only (no switch)
@@ -159,7 +158,7 @@ describe('Model Selection', () => {
         inCodingPhase = true;
         model = codingModel;
       }
-      expect(model).toBe('claude-sonnet-4-5'); // still planning
+      expect(model).toBe('claude-opus-4-5'); // still planning
 
       // Simulate: second turn uses write_file (switch happens)
       const turn2HasSequentialTools = true;
