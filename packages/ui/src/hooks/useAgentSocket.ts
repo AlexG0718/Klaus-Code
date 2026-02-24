@@ -11,7 +11,7 @@ const MAX_HANDLERS = 50;
 
 // Haiku is intentionally absent — it is used automatically for internal tasks
 // (title generation, conversation labeling) and is not user-configurable.
-export type ModelOption = 'claude-opus-4-5' | 'claude-sonnet-4-5';
+export type ModelOption = 'claude-opus-4-5' | 'claude-sonnet-4-6';
 
 export const MODEL_INFO: Record<
   ModelOption,
@@ -22,7 +22,7 @@ export const MODEL_INFO: Record<
     description: 'Best reasoning & complex code',
     costMultiplier: 1,
   },
-  'claude-sonnet-4-5': {
+  'claude-sonnet-4-6': {
     name: 'Sonnet',
     description: 'Balanced performance & cost',
     costMultiplier: 0.2,

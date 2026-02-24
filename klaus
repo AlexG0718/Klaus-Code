@@ -76,8 +76,8 @@ if (!prompt) {
 // ─── Expand model shortcuts ──────────────────────────────────────────────────
 const MODEL_MAP = {
   'opus': 'claude-opus-4-5',
-  'sonnet': 'claude-sonnet-4-5',
-  'haiku': 'claude-haiku-4-5',
+  'sonnet': 'claude-sonnet-4-6',
+  'haiku': 'claude-haiku-4-5-20251001',
 };
 if (model && MODEL_MAP[model.toLowerCase()]) {
   model = MODEL_MAP[model.toLowerCase()];

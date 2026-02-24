@@ -28,6 +28,10 @@ describe('Model Selection', () => {
     // low-level tasks (title generation, conversation labeling) and is NOT
     // user-configurable via the UI.
     const userSelectableModels = [
+      // Current generation (4.6)
+      'claude-opus-4-5',
+      'claude-sonnet-4-6',
+      // Legacy 4.5 — still accepted for backward compatibility
       'claude-opus-4-5',
       'claude-sonnet-4-5',
       'claude-sonnet-4-5-20250929',
@@ -51,26 +55,27 @@ describe('Model Selection', () => {
     it('should reject invalid model names', () => {
       const invalidModels = [
         'gpt-4',
-        'claude-opus-4-6',
         'claude-3-opus',
         'invalid-model',
         '',
         'claude-opus-3',
+        'claude-opus-4-0',
       ];
 
-      // Valid user-selectable prefixes (Opus and Sonnet only — no Haiku)
-      const validPrefixes = ['claude-opus-4-5', 'claude-sonnet-4-5'];
+      // Valid user-selectable set (Opus and Sonnet only — no Haiku)
+      const validModels = new Set([
+        'claude-opus-4-5', 'claude-sonnet-4-6',
+        'claude-opus-4-5', 'claude-sonnet-4-5',
+        'claude-sonnet-4-5-20250929', 'claude-opus-4-5-20251101',
+      ]);
 
       for (const model of invalidModels) {
-        const isValid = validPrefixes.some(
-          (prefix) => model === prefix || model.startsWith(prefix + '-')
-        );
-        expect(isValid).toBe(false);
+        expect(validModels.has(model)).toBe(false);
       }
     });
 
     it('Haiku is reserved for internal automated tasks only', () => {
-      const validPrefixes = ['claude-opus-4-5', 'claude-sonnet-4-5'];
+      const validPrefixes = ['claude-opus-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', 'claude-sonnet-4-5'];
       // Haiku must NOT be in the user-selectable list
       for (const haiku of internalOnlyModels) {
         const isUserSelectable = validPrefixes.some(
@@ -86,10 +91,10 @@ describe('Model Selection', () => {
       const setItem = (key: string, value: string) => { storage[key] = value; };
       const getItem = (key: string) => storage[key] || null;
 
-      setItem('agent-planning-model', 'claude-sonnet-4-5');
+      setItem('agent-planning-model', 'claude-sonnet-4-6');
       setItem('agent-coding-model', 'claude-opus-4-5');
 
-      expect(getItem('agent-planning-model')).toBe('claude-sonnet-4-5');
+      expect(getItem('agent-planning-model')).toBe('claude-sonnet-4-6');
       expect(getItem('agent-coding-model')).toBe('claude-opus-4-5');
     });
 
@@ -126,7 +131,7 @@ describe('Model Selection', () => {
 
     it('should assign Sonnet for memory compression and summarization', () => {
       const midLevelTasks = ['memory_compression', 'context_summarization'];
-      const SONNET_INTERNAL_MODEL = 'claude-sonnet-4-5-20250929';
+      const SONNET_INTERNAL_MODEL = 'claude-sonnet-4-6';
       for (const task of midLevelTasks) {
         expect(SONNET_INTERNAL_MODEL).toContain('sonnet');
         expect(midLevelTasks).toContain(task);
@@ -137,14 +142,14 @@ describe('Model Selection', () => {
       // Agent begins each session using planningModel (default: Opus)
       // for analysis/exploration turns (read-only tool calls)
       const planningModel = 'claude-opus-4-5';
-      expect(['claude-sonnet-4-5', 'claude-opus-4-5']).toContain(planningModel);
+      expect(['claude-sonnet-4-6', 'claude-opus-4-5']).toContain(planningModel);
     });
 
     it('coding phase switches to user-selected coding model after first write', () => {
       // Agent switches to codingModel (default: Opus) once any non-read-only tool is invoked
       // (write_file, apply_patch, npm_run, run_tests, etc.)
       const codingModel = 'claude-opus-4-5';
-      expect(['claude-sonnet-4-5', 'claude-opus-4-5']).toContain(codingModel);
+      expect(['claude-sonnet-4-6', 'claude-opus-4-5']).toContain(codingModel);
     });
 
     it('coding phase is permanent — model does not revert to planning after switch', () => {
@@ -211,12 +216,12 @@ describe('Model Selection', () => {
     });
 
     it('should calculate Sonnet pricing correctly', () => {
-      const cost = estimateCost(1000, 500, 'claude-sonnet-4-5');
+      const cost = estimateCost(1000, 500, 'claude-sonnet-4-6');
       expect(cost).toBeCloseTo(0.0105, 4); // (1000/1M * 3) + (500/1M * 15)
     });
 
     it('should calculate Haiku pricing correctly', () => {
-      const cost = estimateCost(1000, 500, 'claude-haiku-4-5');
+      const cost = estimateCost(1000, 500, 'claude-haiku-4-5-20251001');
       expect(cost).toBeCloseTo(0.0028, 4); // (1000/1M * 0.8) + (500/1M * 4)
     });
 
@@ -452,7 +457,7 @@ describe('Conversation Export', () => {
     it('should handle missing summary', () => {
       const session = {
         id: 'test-456',
-        model: 'claude-sonnet-4-5',
+        model: 'claude-sonnet-4-6',
         createdAt: '2025-01-01',
         turns: [],
       };
@@ -477,7 +482,7 @@ describe('Conversation Export', () => {
     it('should generate valid JSON structure', () => {
       const session = {
         id: 'test-789',
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
         turns: [],
       };
 
@@ -784,8 +789,8 @@ describe('Edge Cases', () => {
 
     it('should handle undefined model', () => {
       const model = undefined;
-      const selectedModel = model || 'claude-sonnet-4-5';
-      expect(selectedModel).toBe('claude-sonnet-4-5');
+      const selectedModel = model || 'claude-sonnet-4-6';
+      expect(selectedModel).toBe('claude-sonnet-4-6');
     });
   });
 

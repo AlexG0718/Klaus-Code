@@ -85,7 +85,7 @@ services:
       - AGENT_HOST_WORKSPACE=${AGENT_WORKSPACE}
       - AGENT_DB_PATH=/data/memory.db
       - AGENT_LOG_DIR=/data/logs
-      - AGENT_MODEL=${AGENT_MODEL:-claude-sonnet-4-5}
+      - AGENT_MODEL=${AGENT_MODEL:-claude-opus-4-5}
       - AGENT_MAX_TOKENS=${AGENT_MAX_TOKENS:-8192}
       - AGENT_MAX_RETRIES=${AGENT_MAX_RETRIES:-3}
       - AGENT_TOKEN_BUDGET=${AGENT_TOKEN_BUDGET:-100000}

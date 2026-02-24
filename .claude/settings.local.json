@@ -20,7 +20,10 @@
       "Bash(git -C /Users/alexgreenberg/Repos/Klaus-Code_4.0 add packages/agent/src/__tests__/unit/NewFeatures.test.ts packages/agent/src/agent/Agent.ts packages/agent/src/server/AgentServer.ts packages/ui/src/App.tsx packages/ui/src/components/ModelSelector.tsx packages/ui/src/hooks/useAgentSocket.ts)",
       "Bash(git -C /Users/alexgreenberg/Repos/Klaus-Code_4.0 log --oneline -3)",
       "Bash(git -C:*)",
-      "Bash(npx jest --config /Users/alexgreenberg/Repos/Klaus-Code_4.0/packages/agent/jest.config.ts --testPathPattern=\"unit/NewFeatures\" --no-coverage)"
+      "Bash(npx jest --config /Users/alexgreenberg/Repos/Klaus-Code_4.0/packages/agent/jest.config.ts --testPathPattern=\"unit/NewFeatures\" --no-coverage)",
+      "Bash(npm run test:unit -w packages/agent)",
+      "Bash(npx tsc --noEmit -p packages/agent/tsconfig.json)",
+      "Bash(npx tsc --noEmit)"
     ]
   }
 }
