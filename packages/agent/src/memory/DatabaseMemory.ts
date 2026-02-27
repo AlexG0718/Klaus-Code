@@ -78,7 +78,7 @@ function pricingForModel(model: string): ModelPricing {
   return DEFAULT_PRICING;
 }
 
-function estimateCost(
+export function estimateCost(
   inputTokens: number,
   outputTokens: number,
   model?: string

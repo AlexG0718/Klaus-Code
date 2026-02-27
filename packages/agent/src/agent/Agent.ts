@@ -2,11 +2,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { DatabaseMemory } from '../memory/DatabaseMemory';
+import { DatabaseMemory, estimateCost } from '../memory/DatabaseMemory';
 import { ToolExecutor, TOOL_DEFINITIONS } from '../tools/ToolExecutor';
 import { GitTool } from '../tools/GitTool';
 import { logger, createChildLogger, logApiDebug } from '../logger';
 import { AtomicCounter } from '../utils/Mutex';
+import { sanitizeErrorMessage } from '../utils/sanitizeError';
 import type { Config } from '../config';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 
@@ -593,31 +594,6 @@ export class Agent {
     return this.sessionCounter.value;
   }
 
-  // ─── Cost estimation ─────────────────────────────────────────────────────
-  // Pricing per million tokens (Anthropic pricing as of Jan 2025)
-  private estimateCost(
-    inputTokens: number,
-    outputTokens: number,
-    modelName?: string
-  ): number {
-    const model = (modelName || this.config.model).toLowerCase();
-    let inputPrice = 15.0; // Opus default ($/M tokens)
-    let outputPrice = 75.0;
-
-    if (model.includes('haiku')) {
-      inputPrice = 0.8;
-      outputPrice = 4.0;
-    } else if (model.includes('sonnet')) {
-      inputPrice = 3.0;
-      outputPrice = 15.0;
-    }
-
-    return (
-      (inputTokens / 1_000_000) * inputPrice +
-      (outputTokens / 1_000_000) * outputPrice
-    );
-  }
-
   // ─── Main run loop ───────────────────────────────────────────────────────
 
   async run(
@@ -823,6 +799,18 @@ export class Agent {
             fullText = '';
             toolUseBlocks.length = 0;
 
+            // Enable prefix caching on conversation messages (90% discount on cached tokens)
+            const cachedMessages = applyCacheBreakpoints(messages);
+
+            // Cache tool definitions — they are static for the entire session
+            const cachedTools = [...TOOL_DEFINITIONS] as any[];
+            if (cachedTools.length > 0) {
+              cachedTools[cachedTools.length - 1] = {
+                ...cachedTools[cachedTools.length - 1],
+                cache_control: { type: 'ephemeral' },
+              };
+            }
+
             const stream = this.client.messages.stream({
               model: model,
               max_tokens: this.config.maxTokens,
@@ -835,8 +823,8 @@ export class Agent {
                   cache_control: { type: 'ephemeral' },
                 } as any,
               ],
-              tools: TOOL_DEFINITIONS as any,
-              messages,
+              tools: cachedTools as any,
+              messages: cachedMessages,
             });
 
             // Stream text deltas to UI in real time
@@ -917,7 +905,7 @@ export class Agent {
               );
               emit({
                 type: 'error',
-                data: { error: err?.message },
+                data: { error: sanitizeErrorMessage(err?.message) },
                 timestamp: new Date(),
               });
               throw err;
@@ -948,7 +936,7 @@ export class Agent {
 
         // ── Emit turn_complete with token usage for UI ────────────────────────
         // This allows the UI to show per-turn costs and help identify expensive operations
-        const estimatedCostThisTurn = this.estimateCost(
+        const estimatedCostThisTurn = estimateCost(
           inputTokens,
           outputTokens,
           model
@@ -1394,13 +1382,29 @@ export class Agent {
     const oldMessages = this.memory.getMessages(sessionId, halfLimit);
     const recentMessages = this.memory.getRecentMessages(sessionId, halfLimit);
 
-    if (!existingSummary || messageCount % Math.floor(limit / 2) === 0) {
+    // Threshold-based re-summarization: only re-summarize when enough new
+    // messages have accumulated since the last summary was generated.
+    const lastSummarizedAtStr = this.memory.getKnowledge(
+      `ctx_summary_count_${sessionId}`
+    );
+    const lastSummarizedAt = lastSummarizedAtStr
+      ? parseInt(lastSummarizedAtStr, 10)
+      : 0;
+    const newMessagesSinceSummary = messageCount - lastSummarizedAt;
+    const resummaryThreshold = Math.floor(limit / 3);
+
+    if (!existingSummary || newMessagesSinceSummary >= resummaryThreshold) {
       this.log.info(
         'Context window limit reached — summarising older messages',
-        { sessionId, messageCount }
+        { sessionId, messageCount, newMessagesSinceSummary }
       );
       const summary = await this.summariseMessages(oldMessages);
       this.memory.setKnowledge(`ctx_summary_${sessionId}`, summary, 'context');
+      this.memory.setKnowledge(
+        `ctx_summary_count_${sessionId}`,
+        String(messageCount),
+        'context'
+      );
       this.log.info('Context summary stored', {
         sessionId,
         summaryLength: summary.length,
@@ -1440,8 +1444,11 @@ export class Agent {
   }
 
   private async summariseMessages(messages: any[]): Promise<string> {
+    // Proportional truncation: more context per message when few messages,
+    // more aggressive when many, keeping total summarization input manageable
+    const perMsgLimit = Math.max(200, Math.floor(10_000 / messages.length));
     const content = messages
-      .map((m) => `${m.role.toUpperCase()}: ${m.content.slice(0, 500)}`)
+      .map((m) => `${m.role.toUpperCase()}: ${m.content.slice(0, perMsgLimit)}`)
       .join('\n\n');
 
     const response = await this.client.messages.create({
@@ -1669,18 +1676,14 @@ function summarizeLargeOutput(
             .slice(0, 10)
             .map(([ext, count]) => `${ext}: ${count}`)
             .join(', ');
-          return JSON.stringify(
-            {
+          return JSON.stringify({
               _summary: true,
               totalFiles: files.length,
               directories: dirs.size,
               extensions: extSummary,
               sample: files.slice(0, 20),
               message: `Showing 20 of ${files.length} files. Use more specific patterns to narrow results.`,
-            },
-            null,
-            2
-          );
+            });
         }
       } catch {
         /* not JSON, fall through */
@@ -1696,8 +1699,7 @@ function summarizeLargeOutput(
           for (const r of results) {
             if (r.file) byFile.set(r.file, (byFile.get(r.file) || 0) + 1);
           }
-          return JSON.stringify(
-            {
+          return JSON.stringify({
               _summary: true,
               totalMatches: results.length,
               filesWithMatches: byFile.size,
@@ -1707,10 +1709,7 @@ function summarizeLargeOutput(
                 .map(([file, count]) => ({ file, matches: count })),
               sample: results.slice(0, 15),
               message: `Showing 15 of ${results.length} matches. Refine your search pattern for more targeted results.`,
-            },
-            null,
-            2
-          );
+            });
         }
       } catch {
         /* not JSON, fall through */
@@ -1748,7 +1747,7 @@ function summarizeLargeOutput(
           duration_ms: ci.duration_ms,
           workflow: ci.workflow ?? null,
           job: ci.job ?? null,
-        }, null, 2);
+        });
 
         const sections: string[] = [meta];
 
@@ -1807,7 +1806,7 @@ function buildToolResultParam(
   maxOutputContext: number = 0
 ): { param: Anthropic.ToolResultBlockParam; serialized: string } {
   let serialized = result.success
-    ? JSON.stringify(result.result, null, 2)
+    ? JSON.stringify(result.result)
     : `ERROR: ${result.error}`;
 
   // Summarize large outputs to save context space
@@ -1828,6 +1827,46 @@ function buildToolResultParam(
     },
     serialized,
   };
+}
+
+// ─── Prefix Caching for Messages ─────────────────────────────────────────────
+// Adds cache_control breakpoints to the last 2 user messages so the API
+// can cache the conversation prefix. Cached input tokens cost 90% less.
+
+function applyCacheBreakpoints(
+  messages: MessageParam[]
+): MessageParam[] {
+  const result = messages.map((m) => ({ ...m }));
+
+  let breakpointsAdded = 0;
+  for (let i = result.length - 1; i >= 0 && breakpointsAdded < 2; i--) {
+    if (result[i].role !== 'user') continue;
+
+    const content = result[i].content;
+    if (typeof content === 'string') {
+      result[i] = {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: content,
+            cache_control: { type: 'ephemeral' },
+          } as any,
+        ],
+      };
+    } else if (Array.isArray(content) && content.length > 0) {
+      // Content is already a block array — add cache_control to the last block
+      const blocks = content.map((b: any) => ({ ...b }));
+      blocks[blocks.length - 1] = {
+        ...blocks[blocks.length - 1],
+        cache_control: { type: 'ephemeral' },
+      };
+      result[i] = { role: 'user', content: blocks as any };
+    }
+    breakpointsAdded++;
+  }
+
+  return result;
 }
 
 // ─── API Retry Logic ──────────────────────────────────────────────────────────

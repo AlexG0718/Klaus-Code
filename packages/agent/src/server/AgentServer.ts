@@ -12,6 +12,7 @@ import { DatabaseMemory } from '../memory/DatabaseMemory';
 import { DockerSandbox } from '../sandbox/DockerSandbox';
 import { logger } from '../logger';
 import { audit } from '../logger/audit';
+import { sanitizeErrorMessage } from '../utils/sanitizeError';
 import type { AgentEvent } from '../agent/Agent';
 import type { Config } from '../config';
 
@@ -578,7 +579,7 @@ export class AgentServer {
         });
         return res
           .status(500)
-          .json({ error: err.message, requestId: req.requestId });
+          .json({ error: sanitizeErrorMessage(err.message), requestId: req.requestId });
       }
     });
 
@@ -887,7 +888,7 @@ export class AgentServer {
           error: err.message,
           requestId: req.requestId,
         });
-        res.status(500).json({ error: err.message, requestId: req.requestId });
+        res.status(500).json({ error: sanitizeErrorMessage(err.message), requestId: req.requestId });
       }
     });
 
@@ -1193,7 +1194,7 @@ export class AgentServer {
               this.metrics.sessionsFailed++;
               socket.emit('agent_event', {
                 type: 'error',
-                data: { error: err.message, sessionId: sid },
+                data: { error: sanitizeErrorMessage(err.message), sessionId: sid },
                 timestamp: new Date(),
               });
 
