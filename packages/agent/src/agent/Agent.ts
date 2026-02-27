@@ -8,6 +8,7 @@ import { GitTool } from '../tools/GitTool';
 import { logger, createChildLogger, logApiDebug } from '../logger';
 import { AtomicCounter } from '../utils/Mutex';
 import { sanitizeErrorMessage } from '../utils/sanitizeError';
+import { TokenBudgetManager } from './TokenBudgetManager';
 import type { Config } from '../config';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 
@@ -36,6 +37,7 @@ export interface AgentEvent {
     | 'error'
     | 'budget_warning' // fired once when crossing 80% of token budget
     | 'budget_exceeded' // fired when token budget hit — loop halted
+    | 'budget_escalated' // fired when budget tier increases
     | 'tool_limit_exceeded' // fired when maxToolCalls hit — loop halted
     | 'turn_complete' // fired after each turn with token usage
     | 'patch_approval_required' // fired when patch needs user approval
@@ -719,9 +721,14 @@ export class Agent {
     let turnCount = 0;
     // Track unique tool names used for better summary generation
     const toolsUsed = new Set<string>();
-    // Tracks whether the 80% budget warning has already fired this run.
-    // A boolean avoids the fragile "infer from previous turn total" approach.
-    let budgetWarningFired = false;
+    // Dynamic token budget manager — handles tier escalation and warning/halt logic.
+    // In flat mode (all tier vars = 0), behaves identically to the previous boolean flag.
+    const budgetManager = new TokenBudgetManager({
+      flatBudget: this.config.tokenBudget,
+      tier1: this.config.tokenBudgetTier1,
+      tier2: this.config.tokenBudgetTier2,
+      tier3: this.config.tokenBudgetTier3,
+    });
     const toolCallLimit = this.config.maxToolCalls;
 
     // always decrement activeSessions whether we return normally, throw, or break
@@ -923,7 +930,7 @@ export class Agent {
         this.memory.recordTokenUsage(sid, inputTokens, outputTokens, model);
 
         const totalUsed = totalInputTokens + totalOutputTokens;
-        const budget = this.config.tokenBudget;
+        const currentBudget = budgetManager.budget;
 
         this.log.debug('API response', {
           stopReason,
@@ -931,7 +938,8 @@ export class Agent {
           outputTokens,
           tools: toolUseBlocks.length,
           totalUsed,
-          budgetRemaining: budget > 0 ? budget - totalUsed : 'unlimited',
+          budgetRemaining: currentBudget > 0 ? currentBudget - totalUsed : 'unlimited',
+          budgetTier: budgetManager.isTiered ? budgetManager.tier : 'flat',
         });
 
         // ── Emit turn_complete with token usage for UI ────────────────────────
@@ -954,45 +962,104 @@ export class Agent {
             totalOutputTokens,
             totalTokens: totalUsed,
             budgetUsedPercent:
-              budget > 0 ? Math.round((totalUsed / budget) * 100) : null,
-            budgetRemaining: budget > 0 ? budget - totalUsed : null,
+              currentBudget > 0 ? Math.round((totalUsed / currentBudget) * 100) : null,
+            budgetRemaining: currentBudget > 0 ? currentBudget - totalUsed : null,
+            budgetTier: budgetManager.isTiered ? budgetManager.tier : null,
+            budgetTiered: budgetManager.isTiered,
           },
           timestamp: new Date(),
         });
 
         turnCount++; // Increment turn counter for next iteration
 
-        // ── Token budget enforcement ─────────────────────────────────────────
-        if (budget > 0) {
-          const pct = totalUsed / budget;
+        // ── Token budget enforcement (dynamic tiers) ─────────────────────────
+        if (currentBudget > 0) {
+          const checkResult = budgetManager.checkBudget(totalUsed);
 
-          // Warn exactly once when crossing 80%. Using a boolean flag avoids the
-          // edge case where a single large turn jumps from <80% to >100%, which
-          // caused the old inference-based check to silently skip the warning.
-          if (!budgetWarningFired && pct >= 0.8 && pct < 1.0) {
-            budgetWarningFired = true;
-            this.log.warn('Token budget 80% warning', {
+          // Tier escalated — log and notify UI
+          if (checkResult.escalated && checkResult.newTier) {
+            this.log.info('Token budget escalated to higher tier', {
+              newTier: checkResult.newTier,
+              newBudget: budgetManager.budget,
+              previousBudget: currentBudget,
               totalUsed,
-              budget,
               sessionId: sid,
             });
             emit({
-              type: 'budget_warning',
-              data: { totalUsed, budget, percentUsed: Math.round(pct * 100) },
+              type: 'budget_escalated',
+              data: {
+                newTier: checkResult.newTier,
+                newBudget: budgetManager.budget,
+                previousBudget: currentBudget,
+                totalUsed,
+              },
               timestamp: new Date(),
             });
           }
 
-          // Halt when budget is exhausted
-          if (totalUsed >= budget) {
-            this.log.error('Token budget exceeded — halting loop', {
+          // 80% warning — also inject a system note so the model can wind down
+          if (checkResult.warning) {
+            const activeBudget = budgetManager.budget;
+            const pct = totalUsed / activeBudget;
+            const remaining = activeBudget - totalUsed;
+            this.log.warn('Token budget 80% warning', {
               totalUsed,
-              budget,
+              budget: activeBudget,
+              tier: budgetManager.isTiered ? budgetManager.tier : 'flat',
               sessionId: sid,
             });
             emit({
+              type: 'budget_warning',
+              data: {
+                totalUsed,
+                budget: activeBudget,
+                percentUsed: Math.round(pct * 100),
+                tier: budgetManager.isTiered ? budgetManager.tier : null,
+              },
+              timestamp: new Date(),
+            });
+            // Let the model know it's running low so it can prioritize
+            messages.push({
+              role: 'user',
+              content:
+                `[System: You have used 80% of your token budget. ` +
+                `~${remaining.toLocaleString()} tokens remain. ` +
+                `Prioritize completing your current task. ` +
+                `Summarize remaining work if you cannot finish.]`,
+            });
+          }
+
+          // Hard halt — budget exhausted after all escalation attempts
+          if (checkResult.halt) {
+            const activeBudget = budgetManager.budget;
+            const pct = totalUsed / activeBudget;
+            this.log.error('Token budget exceeded — halting loop', {
+              totalUsed,
+              budget: activeBudget,
+              tier: budgetManager.isTiered ? budgetManager.tier : 'flat',
+              sessionId: sid,
+            });
+            // Save continuation hint for resume support
+            this.memory.setKnowledge(
+              `budget_halt_${sid}`,
+              JSON.stringify({
+                totalUsed,
+                tier: budgetManager.tier,
+                filesModified: Array.from(budgetManager.signals.filesModified),
+                lastSummary: fullText?.slice(0, 500),
+              }),
+              'budget'
+            );
+            emit({
               type: 'budget_exceeded',
-              data: { totalUsed, budget, percentUsed: Math.round(pct * 100) },
+              data: {
+                totalUsed,
+                budget: activeBudget,
+                percentUsed: Math.round(pct * 100),
+                tier: budgetManager.isTiered ? budgetManager.tier : null,
+                resumable: true,
+                sessionId: sid,
+              },
               timestamp: new Date(),
             });
             if (fullText)
@@ -1263,6 +1330,55 @@ export class Agent {
           );
           this.persistToolResult(sid, toolUse, result, serialized);
           toolResults.push(param);
+
+          // ── Record escalation signals for dynamic token budget ──────────
+          if (budgetManager.isTiered) {
+            // Signal: file modifications (write_file, apply_patch expand scope)
+            if (['write_file', 'apply_patch'].includes(toolUse.name)) {
+              const filePath = (toolUse.input as Record<string, unknown>)?.path;
+              if (typeof filePath === 'string' && budgetManager.recordFileModification(filePath)) {
+                this.log.info('Budget escalated due to scope expansion', {
+                  newTier: budgetManager.tier,
+                  newBudget: budgetManager.budget,
+                  filesModified: budgetManager.signals.filesModified.size,
+                  sessionId: sid,
+                });
+                emit({
+                  type: 'budget_escalated',
+                  data: {
+                    newTier: budgetManager.tier,
+                    newBudget: budgetManager.budget,
+                    reason: 'scope_expansion',
+                    filesModified: budgetManager.signals.filesModified.size,
+                  },
+                  timestamp: new Date(),
+                });
+              }
+            }
+
+            // Signal: test results (only run_tests, not run_ci)
+            if (toolUse.name === 'run_tests' && result.success) {
+              const passed = (result.result as Record<string, unknown>)?.passed;
+              if (typeof passed === 'boolean' && budgetManager.recordTestResult(passed)) {
+                this.log.info('Budget escalated due to repeated test failures', {
+                  newTier: budgetManager.tier,
+                  newBudget: budgetManager.budget,
+                  consecutiveFailures: budgetManager.signals.consecutiveTestFailures,
+                  sessionId: sid,
+                });
+                emit({
+                  type: 'budget_escalated',
+                  data: {
+                    newTier: budgetManager.tier,
+                    newBudget: budgetManager.budget,
+                    reason: 'test_failures',
+                    consecutiveFailures: budgetManager.signals.consecutiveTestFailures,
+                  },
+                  timestamp: new Date(),
+                });
+              }
+            }
+          }
         }
 
         // Switch to coding model once any code-writing/exec tool has been invoked.

@@ -25,6 +25,13 @@ const ConfigSchema = z.object({
   // Set to 0 to disable (not recommended for unattended use).
   AGENT_TOKEN_BUDGET: z.coerce.number().min(0).default(100_000),
 
+  // Dynamic token budget tiers (optional). When all three are set (non-zero),
+  // sessions start at TIER1 and escalate based on complexity signals (repeated
+  // test failures, scope expansion). Leave at 0 to use the flat AGENT_TOKEN_BUDGET.
+  AGENT_TOKEN_BUDGET_TIER1: z.coerce.number().min(0).default(0),
+  AGENT_TOKEN_BUDGET_TIER2: z.coerce.number().min(0).default(0),
+  AGENT_TOKEN_BUDGET_TIER3: z.coerce.number().min(0).default(0),
+
   // Maximum tool calls per session. Halts stuck retry loops before they burn
   // the full token budget. Independent of the token budget — whichever limit
   // is hit first stops the loop.
@@ -135,6 +142,9 @@ export type Config = {
   apiSecret?: string;
   maxContextMessages: number;
   tokenBudget: number;
+  tokenBudgetTier1: number;
+  tokenBudgetTier2: number;
+  tokenBudgetTier3: number;
   maxToolCalls: number;
   maxConcurrentSessions: number;
   corsOrigin: string;
@@ -218,6 +228,9 @@ export function loadConfig(): Config {
     apiSecret: env.AGENT_API_SECRET,
     maxContextMessages: env.AGENT_MAX_CONTEXT_MESSAGES,
     tokenBudget: env.AGENT_TOKEN_BUDGET,
+    tokenBudgetTier1: env.AGENT_TOKEN_BUDGET_TIER1,
+    tokenBudgetTier2: env.AGENT_TOKEN_BUDGET_TIER2,
+    tokenBudgetTier3: env.AGENT_TOKEN_BUDGET_TIER3,
     maxToolCalls: env.AGENT_MAX_TOOL_CALLS,
     maxConcurrentSessions: env.AGENT_MAX_CONCURRENT_SESSIONS,
     corsOrigin: env.AGENT_CORS_ORIGIN,
