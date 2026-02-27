@@ -175,7 +175,7 @@ describe('E2E: Export Workflow', () => {
     };
     
     // Handler checks for export shortcut
-    const isExportShortcut = (e.metaKey || e.ctrlKey) && e.key === 'e';
+    const isExportShortcut = (event.metaKey || event.ctrlKey) && event.key === 'e';
     expect(isExportShortcut).toBe(true);
   });
 });

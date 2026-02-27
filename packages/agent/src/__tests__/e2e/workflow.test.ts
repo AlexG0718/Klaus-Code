@@ -10,6 +10,7 @@
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs-extra';
+import simpleGit from 'simple-git';
 import { ToolExecutor } from '../../tools/ToolExecutor';
 import { DatabaseMemory } from '../../memory/DatabaseMemory';
 import { GitTool } from '../../tools/GitTool';
@@ -32,8 +33,27 @@ describe('E2E - Agent Workflow', () => {
     model: 'claude-opus-4-5',
     maxTokens: 8192,
     maxRetries: 3,
+    maxContextMessages: 30,
+    tokenBudget: 100_000,
+    maxToolCalls: 50,
+    maxConcurrentSessions: 3,
+    corsOrigin: 'http://localhost:5173',
+    maxPromptChars: 32_000,
+    trustProxy: false,
+    maxSearchResults: 500,
+    wsRateLimit: 30,
+    shutdownTimeout: 30_000,
+    maxToolResultSize: 10_240,
+    metricsEnabled: false,
+    sessionTtl: 86_400_000,
+    sessionCleanupInterval: 300_000,
+    requirePatchApproval: false,
+    apiRetryCount: 3,
+    apiRetryDelay: 1000,
+    apiRetryMaxDelay: 30_000,
+    maxToolOutputContext: 8_000,
+    debugMode: false,
     dockerEnabled: false,
-    allowedCommands: ['npm', 'npx', 'node', 'echo', 'sh', 'ls', 'cat', 'mkdir', 'git'],
     port: 3001,
   };
 
@@ -53,6 +73,8 @@ describe('E2E - Agent Workflow', () => {
 
     git = new GitTool(workspace);
     await git.ensureRepo();
+    // Disable commit signing for test repos — they have no signing keys
+    await simpleGit(workspace).addConfig('commit.gpgsign', 'false');
   });
 
   afterEach(async () => {
