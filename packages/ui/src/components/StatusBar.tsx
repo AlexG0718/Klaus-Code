@@ -24,6 +24,16 @@ function playNotificationSound() {
   }
 }
 
+function formatElapsed(totalSeconds: number): string {
+  const hrs = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
 interface Props {
   connected:   boolean;
   isRunning:   boolean;
@@ -49,7 +59,13 @@ export function StatusBar({ connected, isRunning, sessionId, tokenUsage, onEvent
   const [toolCount,  setToolCount]  = useState<number | null>(null);
   const [lastTurn, setLastTurn]     = useState<TurnUsage | null>(null);
   const [showTurnInfo, setShowTurnInfo] = useState(false);
-  
+
+  // Elapsed time timer
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const [finalElapsed, setFinalElapsed] = useState<number | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
   // Sound notification preference (stored in localStorage)
   const [soundEnabled, setSoundEnabled] = useState(() => {
     try {
@@ -113,6 +129,38 @@ export function StatusBar({ connected, isRunning, sessionId, tokenUsage, onEvent
     return unsubscribe;
   }, [onEvent, soundEnabled]);
 
+  // Elapsed time timer — start/stop based on isRunning transitions
+  // Must be declared before the wasRunningRef update so we can read the previous value
+  useEffect(() => {
+    if (isRunning) {
+      startTimeRef.current = Date.now();
+      setElapsedSec(0);
+      setFinalElapsed(null);
+      timerRef.current = setInterval(() => {
+        setElapsedSec(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      }, 1000);
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      // Show final elapsed only if we were actually running (not initial mount)
+      if (wasRunningRef.current && startTimeRef.current > 0) {
+        const finalSec = Math.floor((Date.now() - startTimeRef.current) / 1000);
+        if (finalSec > 0) {
+          setFinalElapsed(finalSec);
+          setTimeout(() => setFinalElapsed(null), 5000);
+        }
+      }
+    }
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [isRunning]);
+
   // Track running state
   useEffect(() => {
     wasRunningRef.current = isRunning;
@@ -122,10 +170,11 @@ export function StatusBar({ connected, isRunning, sessionId, tokenUsage, onEvent
     if (tokenUsage) setLiveUsed(tokenUsage.totalTokens);
   }, [tokenUsage]);
 
-  // Reset turn info when session changes
+  // Reset turn info and elapsed timer when session changes
   useEffect(() => {
     setLastTurn(null);
     setShowTurnInfo(false);
+    setFinalElapsed(null);
   }, [sessionId]);
 
   const usedTokens = liveUsed || tokenUsage?.totalTokens || 0;
@@ -151,11 +200,19 @@ export function StatusBar({ connected, isRunning, sessionId, tokenUsage, onEvent
         <span>{connected ? 'Connected' : 'Disconnected'}</span>
       </div>
 
-      {/* Running pulse */}
+      {/* Running pulse with elapsed timer */}
       {isRunning && alertState === 'ok' && (
         <div className="flex items-center gap-1.5 text-purple-400 flex-shrink-0">
           <div className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
           <span>Running…</span>
+          <span className="tabular-nums text-purple-300">{formatElapsed(elapsedSec)}</span>
+        </div>
+      )}
+
+      {/* Completed elapsed time (shows briefly after run finishes) */}
+      {!isRunning && finalElapsed !== null && (
+        <div className="flex items-center gap-1.5 text-green-400 flex-shrink-0">
+          <span>Completed in {formatElapsed(finalElapsed)}</span>
         </div>
       )}
 
