@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { AgentEvent, ChatMessage } from '../lib/types';
+import type { StopReason } from '../hooks/useAgentSocket';
 
 const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3001';
 const API_SECRET = import.meta.env.VITE_API_SECRET ?? '';
@@ -33,15 +34,65 @@ function CodeBlock({ language, children }: { language: string; children: string 
   );
 }
 
+const STOP_REASON_CONFIG: Record<StopReason, { icon: string; label: string; bg: string; border: string; text: string }> = {
+  cancelled: {
+    icon: '\u23F8',
+    label: 'Agent stopped by user',
+    bg: 'bg-gray-800/60',
+    border: 'border-gray-700',
+    text: 'text-gray-300',
+  },
+  budget_exceeded: {
+    icon: '\u26A1',
+    label: 'Budget limit reached',
+    bg: 'bg-amber-900/20',
+    border: 'border-amber-800/40',
+    text: 'text-amber-200',
+  },
+  error: {
+    icon: '\u26A0',
+    label: 'Something went wrong',
+    bg: 'bg-red-900/20',
+    border: 'border-red-800/40',
+    text: 'text-red-200',
+  },
+  tool_limit: {
+    icon: '\uD83D\uDD27',
+    label: 'Tool call limit reached',
+    bg: 'bg-amber-900/20',
+    border: 'border-amber-800/40',
+    text: 'text-amber-200',
+  },
+};
+
+function StatusBanner({ stopReason, onResume }: { stopReason: StopReason; onResume: () => void }) {
+  const config = STOP_REASON_CONFIG[stopReason];
+  return (
+    <div className={`mx-4 mb-3 px-4 py-3 rounded-lg border ${config.bg} ${config.border} flex items-center justify-between`}>
+      <span className={`text-sm ${config.text}`}>
+        {config.icon}{'  '}{config.label}
+      </span>
+      <button
+        onClick={onResume}
+        className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-sm font-semibold rounded-lg transition-colors"
+      >
+        Resume
+      </button>
+    </div>
+  );
+}
+
 interface Props {
   sessionId: string | null;
   isRunning: boolean;
+  stopReason: StopReason | null;
   onEvent: (handler: (e: AgentEvent) => void) => () => void;
   onSendPrompt: (message: string) => void;
   onCancel: () => void;
+  onResume: () => void;
 }
 
-export function ChatView({ sessionId, isRunning, onEvent, onSendPrompt, onCancel }: Props) {
+export function ChatView({ sessionId, isRunning, stopReason, onEvent, onSendPrompt, onCancel, onResume }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [streamingId, setStreamingId] = useState<string | null>(null);
@@ -258,6 +309,11 @@ export function ChatView({ sessionId, isRunning, onEvent, onSendPrompt, onCancel
         )}
         <div ref={bottomRef} />
       </div>
+
+      {/* Status banner — shown after cancel, budget limit, error, or tool limit */}
+      {stopReason && !isRunning && (
+        <StatusBanner stopReason={stopReason} onResume={onResume} />
+      )}
 
       {/* Input */}
       <div className="border-t border-gray-800 p-4">

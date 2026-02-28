@@ -68,10 +68,10 @@ function AgentApp() {
   const [pendingPatch, setPendingPatch] = useState<PatchApprovalEvent['data'] | null>(null);
 
   const {
-    connected, isRunning, currentSessionId,
+    connected, isRunning, currentSessionId, stopReason,
     planningModel, setPlanningModel,
     codingModel, setCodingModel,
-    sendPrompt, cancelSession, onEvent, respondToPatchApproval
+    sendPrompt, cancelSession, resumeSession, onEvent, respondToPatchApproval
   } = useAgentSocket();
 
   // Fetch server config including token budget
@@ -113,6 +113,10 @@ function AgentApp() {
   const handleCancel = useCallback(() => {
     if (currentSessionId) cancelSession(currentSessionId);
   }, [cancelSession, currentSessionId]);
+
+  const handleResume = useCallback(() => {
+    if (currentSessionId) resumeSession(currentSessionId);
+  }, [resumeSession, currentSessionId]);
 
   const handleNewSession = useCallback(() => {
     setActiveSessionId(null);
@@ -263,9 +267,11 @@ function AgentApp() {
           <ChatView
             sessionId={activeSessionId}
             isRunning={isRunning}
+            stopReason={stopReason}
             onEvent={onEvent}
             onSendPrompt={handleSendPrompt}
             onCancel={handleCancel}
+            onResume={handleResume}
           />
         </div>
 

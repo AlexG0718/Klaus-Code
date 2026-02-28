@@ -602,7 +602,7 @@ export class Agent {
     userMessage: string,
     sessionId?: string,
     onEvent?: EventHandler,
-    options?: { model?: string; planningModel?: string; codingModel?: string }
+    options?: { model?: string; planningModel?: string; codingModel?: string; isResume?: boolean }
   ): Promise<AgentRunResult> {
     const sid = sessionId ?? uuidv4();
     const start = Date.now();
@@ -656,12 +656,14 @@ export class Agent {
       );
     }
 
+    const isResume = options?.isResume ?? false;
     this.log.info('Agent run started', {
       sessionId: sid,
       messageLength: userMessage.length,
       activeSessions: this.sessionCounter.value,
       planningModel,
       codingModel,
+      isResume,
     });
 
     // Abort controller for cancel support
@@ -681,12 +683,17 @@ export class Agent {
       this.memory.createSession(sid, this.config.workspaceDir);
     }
 
+    // On resume, clear any stale budget halt data so the fresh budget applies
+    if (isResume) {
+      this.memory.deleteKnowledge(`budget_halt_${sid}`);
+    }
+
     this.memory.addMessage({
       id: uuidv4(),
       sessionId: sid,
       role: 'user',
       content: userMessage,
-      metadata: { workspaceDir: this.config.workspaceDir },
+      metadata: { workspaceDir: this.config.workspaceDir, isResume },
     });
     emit({
       type: 'message',

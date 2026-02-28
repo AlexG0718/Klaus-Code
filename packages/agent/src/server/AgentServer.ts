@@ -602,6 +602,27 @@ export class AgentServer {
       res.json({ success: cancelled, sessionId: id, requestId: req.requestId });
     });
 
+    // ── Resume halted session ───────────────────────────────────────────────
+    this.app.post('/api/sessions/:id/resume', async (req: Request, res: Response) => {
+      const id = getParam(req, 'id');
+      const session = this.memory.getSession(id);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found', requestId: req.requestId });
+      }
+      logger.info('Resume request', { sessionId: id, requestId: req.requestId });
+      try {
+        const result = await this.agent.run(
+          '[System: The user has requested you resume. Continue from where you left off. Do not repeat completed work.]',
+          id,
+          (event: AgentEvent) => { this.io.to(id).emit('agent_event', event); },
+          { isResume: true }
+        );
+        res.json({ success: true, sessionId: id, result, requestId: req.requestId });
+      } catch (err: any) {
+        res.status(500).json({ error: sanitizeErrorMessage(err.message), requestId: req.requestId });
+      }
+    });
+
     // ── Sessions list + search ────────────────────────────────────────────
     this.app.get('/api/sessions', (req: Request, res: Response) => {
       try {
@@ -1219,6 +1240,94 @@ export class AgentServer {
             cancelled,
           });
         })
+      );
+
+      // Resume a halted session (after cancel, budget limit, error, or tool limit)
+      socket.on(
+        'resume',
+        rateLimitedHandler(
+          'resume',
+          async (data: {
+            sessionId: string;
+            planningModel?: string;
+            codingModel?: string;
+          }) => {
+            const sid = data.sessionId;
+            if (!sid) {
+              socket.emit('agent_event', {
+                type: 'error',
+                data: { error: 'sessionId is required to resume' },
+                timestamp: new Date(),
+              });
+              return;
+            }
+            socket.join(sid);
+            logger.info('WebSocket resume', {
+              socketId: socket.id,
+              sessionId: sid,
+            });
+
+            // Concurrent session guard
+            if (
+              this.agent.activeSessionCount >= this.config.maxConcurrentSessions
+            ) {
+              socket.emit('agent_event', {
+                type: 'error',
+                data: {
+                  error:
+                    `Too many concurrent sessions ` +
+                    `(${this.agent.activeSessionCount}/${this.config.maxConcurrentSessions}). ` +
+                    `Wait for a running session to complete or cancel one.`,
+                },
+                timestamp: new Date(),
+              });
+              return;
+            }
+
+            try {
+              const result = await this.agent.run(
+                '[System: The user has requested you resume. Continue from where you left off. Do not repeat completed work.]',
+                sid,
+                (event: AgentEvent) => {
+                  this.io.to(sid).emit('agent_event', event);
+
+                  if (event.type === 'tool_call') {
+                    const toolData = event.data as any;
+                    this.metrics.toolCallsTotal++;
+                    this.metrics.toolCallsByName.set(
+                      toolData.name,
+                      (this.metrics.toolCallsByName.get(toolData.name) || 0) + 1
+                    );
+                  }
+                  if (event.type === 'tool_result') {
+                    const resultData = event.data as any;
+                    if (!resultData.success) this.metrics.toolCallErrors++;
+                  }
+                },
+                { planningModel: data.planningModel, codingModel: data.codingModel, isResume: true }
+              );
+
+              if (result.tokenUsage) {
+                this.metrics.tokensUsedTotal +=
+                  result.tokenUsage.inputTokens +
+                  result.tokenUsage.outputTokens;
+              }
+              this.metrics.sessionsCompleted++;
+              socket.emit('prompt_complete', { ...result });
+            } catch (err: any) {
+              logger.error('WebSocket resume error', {
+                error: err.message,
+                sessionId: sid,
+              });
+              this.metrics.sessionsFailed++;
+              socket.emit('agent_event', {
+                type: 'error',
+                data: { error: sanitizeErrorMessage(err.message), sessionId: sid },
+                timestamp: new Date(),
+              });
+            }
+          }
+        )
       );
 
       // Patch approval response handler

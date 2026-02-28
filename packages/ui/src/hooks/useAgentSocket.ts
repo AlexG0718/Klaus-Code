@@ -29,16 +29,20 @@ export const MODEL_INFO: Record<
   },
 };
 
+export type StopReason = 'cancelled' | 'budget_exceeded' | 'error' | 'tool_limit';
+
 interface UseAgentSocketReturn {
   connected: boolean;
   isRunning: boolean;
   currentSessionId: string | null;
+  stopReason: StopReason | null;
   planningModel: ModelOption;
   setPlanningModel: (model: ModelOption) => void;
   codingModel: ModelOption;
   setCodingModel: (model: ModelOption) => void;
   sendPrompt: (message: string, sessionId?: string) => string;
   cancelSession: (sessionId: string) => void;
+  resumeSession: (sessionId: string) => void;
   onEvent: (handler: (event: AgentEvent) => void) => () => void;
   respondToPatchApproval: (approved: boolean, patchId: string) => void;
 }
@@ -47,6 +51,7 @@ export function useAgentSocket(): UseAgentSocketReturn {
   const [connected, setConnected] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [stopReason, setStopReason] = useState<StopReason | null>(null);
 
   const readModel = (key: string, fallback: ModelOption): ModelOption => {
     try {
@@ -122,7 +127,20 @@ export function useAgentSocket(): UseAgentSocketReturn {
           /* handler error, continue */
         }
       });
-      if (event.type === 'complete' || event.type === 'error') {
+      if (event.type === 'budget_exceeded') {
+        setStopReason('budget_exceeded');
+        setIsRunning(false);
+      } else if (event.type === 'tool_limit_exceeded') {
+        setStopReason('tool_limit');
+        setIsRunning(false);
+      } else if (event.type === 'error') {
+        const d = event.data as any;
+        // Don't override cancel stopReason with the follow-up error event
+        if (d?.error !== 'Cancelled by user') {
+          setStopReason('error');
+        }
+        setIsRunning(false);
+      } else if (event.type === 'complete') {
         setIsRunning(false);
       }
     });
@@ -158,6 +176,7 @@ export function useAgentSocket(): UseAgentSocketReturn {
       const sid = sessionId ?? uuidv4();
       setCurrentSessionId(sid);
       setIsRunning(true);
+      setStopReason(null);
       socketRef.current?.emit('join_session', sid);
       socketRef.current?.emit('prompt', {
         message,
@@ -172,8 +191,16 @@ export function useAgentSocket(): UseAgentSocketReturn {
 
   const cancelSession = useCallback((sessionId: string) => {
     socketRef.current?.emit('cancel', sessionId);
+    setStopReason('cancelled');
     setIsRunning(false);
   }, []);
+
+  const resumeSession = useCallback((sessionId: string) => {
+    setIsRunning(true);
+    setStopReason(null);
+    socketRef.current?.emit('join_session', sessionId);
+    socketRef.current?.emit('resume', { sessionId, planningModel, codingModel });
+  }, [planningModel, codingModel]);
 
   const respondToPatchApproval = useCallback(
     (approved: boolean, patchId: string) => {
@@ -186,12 +213,14 @@ export function useAgentSocket(): UseAgentSocketReturn {
     connected,
     isRunning,
     currentSessionId,
+    stopReason,
     planningModel,
     setPlanningModel,
     codingModel,
     setCodingModel,
     sendPrompt,
     cancelSession,
+    resumeSession,
     onEvent,
     respondToPatchApproval,
   };
